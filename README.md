@@ -54,3 +54,8 @@ This repository is a ground-up rebuild, addressing these concerns while maintain
 ## Acknowledgement
 
 The template is heavily inspired by Aztec's [`BaseUltraVerifier.sol`](https://github.com/AztecProtocol/barretenberg/blob/4c456a2b196282160fd69bead6a1cea85289af37/sol/src/ultra/BaseUltraVerifier.sol).
+
+
+## Lookup Modularity 
+
+Note that we have extended the verifier to include the ability to verify mvlookup / logup lookups. This is hidden behind the `mvlookup` feature flag.
