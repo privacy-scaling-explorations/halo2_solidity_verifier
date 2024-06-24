@@ -12,12 +12,14 @@ pub(crate) struct Halo2VerifyingKey {
     pub(crate) constants: Vec<(&'static str, U256)>,
     pub(crate) fixed_comms: Vec<(U256, U256)>,
     pub(crate) permutation_comms: Vec<(U256, U256)>,
+    pub(crate) const_lookup_input_expressions: Vec<U256>,
 }
 
 impl Halo2VerifyingKey {
     pub(crate) fn len(&self) -> usize {
         (self.constants.len() * 0x20)
             + (self.fixed_comms.len() + self.permutation_comms.len()) * 0x40
+            + (self.const_lookup_input_expressions.len() * 0x20)
     }
 }
 

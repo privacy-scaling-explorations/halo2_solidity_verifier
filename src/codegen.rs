@@ -217,18 +217,39 @@ impl<'a> SolidityGenerator<'a> {
                 ("neg_s_g2_y_2", neg_s_g2[3]),
             ]
         };
-        let fixed_comms = chain![self.vk.fixed_commitments()]
+        let fixed_comms: Vec<(U256, U256)> = chain![self.vk.fixed_commitments()]
             .flat_map(g1_to_u256s)
             .tuples()
             .collect();
-        let permutation_comms = chain![self.vk.permutation().commitments()]
+        let permutation_comms: Vec<(U256, U256)> = chain![self.vk.permutation().commitments()]
             .flat_map(g1_to_u256s)
             .tuples()
             .collect();
+
+        let proof_cptr = Ptr::calldata(if true { 0x84 } else { 0x64 });
+
+        let dummy_vk = Halo2VerifyingKey {
+            constants: constants.clone(),
+            fixed_comms: fixed_comms.clone(),
+            permutation_comms: permutation_comms.clone(),
+            const_lookup_input_expressions: vec![],
+        };
+
+        let vk_mptr = Ptr::memory(self.estimate_static_working_memory_size(&dummy_vk, proof_cptr));
+        let data = Data::new(&self.meta, &dummy_vk, vk_mptr, proof_cptr);
+
+        let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
+
+        let result: (Vec<(Vec<String>, String)>, Vec<bn256::Fr>) = evaluator.lookup_computations();
+
+        let const_lookup_input_expressions =
+            result.1.into_iter().map(fr_to_u256).collect::<Vec<_>>();
+
         Halo2VerifyingKey {
             constants,
             fixed_comms,
             permutation_comms,
+            const_lookup_input_expressions,
         }
     }
 
@@ -246,7 +267,7 @@ impl<'a> SolidityGenerator<'a> {
         let quotient_eval_numer_computations = chain![
             evaluator.gate_computations(),
             evaluator.permutation_computations(),
-            evaluator.lookup_computations()
+            evaluator.lookup_computations().0
         ]
         .enumerate()
         .map(|(idx, (mut lines, var))| {

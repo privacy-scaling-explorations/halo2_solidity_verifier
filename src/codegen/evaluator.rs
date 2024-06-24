@@ -121,8 +121,9 @@ where
     }
 
     #[cfg(feature = "mv-lookup")]
-    pub fn lookup_computations(&self) -> Vec<(Vec<String>, String)> {
+    pub fn lookup_computations(&self) -> (Vec<(Vec<String>, String)>, Vec<F>) {
         let evaluate = |expressions: &Vec<_>| {
+            println!("expressions: {:?}", expressions);
             let (lines, inputs) = expressions
                 .iter()
                 .map(|expression| self.evaluate(expression))
@@ -134,26 +135,36 @@ where
             self.reset();
             (lines, inputs)
         };
+
+        let evaluate_lookup_consts = |expressions: &Vec<_>, constants: &mut Vec<F>| {
+            expressions.iter().for_each(|expression| {
+                self.collect_constants(expression, constants);
+            });
+        };
+
+        let mut inputs_consts: Vec<F> = Vec::new();
         let inputs_tables = self
             .cs
             .lookups()
             .iter()
             .map(|lookup| {
-                let inputs = lookup
-                    .input_expressions()
-                    .iter()
-                    .map(evaluate)
-                    .collect_vec();
+                let inputs_iter = lookup.input_expressions().iter();
+                let inputs = inputs_iter.clone().map(evaluate).collect_vec();
+                inputs_iter.for_each(|arg| {
+                    evaluate_lookup_consts(arg, &mut inputs_consts);
+                });
                 let table = evaluate(lookup.table_expressions());
                 (inputs, table)
             })
             .collect_vec();
-        izip!(inputs_tables, &self.data.lookup_evals)
+        let vec = izip!(inputs_tables, &self.data.lookup_evals)
             .flat_map(|(inputs_tables, evals)| {
-                let (inputs, (table_lines, tables)) = inputs_tables;
+                let (inputs, (table_lines, tables)) = inputs_tables.clone();
                 let num_inputs = inputs.len();
                 let (table_0, rest_tables) = tables.split_first().unwrap();
                 let (phi, phi_next, m) = evals;
+                // print line the input tables
+                println!("inputs: {:?}", inputs.clone());
                 [
                     vec![
                         format!("let l_0 := mload(L_0_MPTR)"),
@@ -238,11 +249,12 @@ where
                 ]
             })
             .zip(iter::repeat("eval".to_string()))
-            .collect_vec()
+            .collect_vec();
+        (vec, inputs_consts)
     }
 
     #[cfg(not(feature = "mv-lookup"))]
-    pub fn lookup_computations(&self) -> Vec<(Vec<String>, String)> {
+    pub fn lookup_computations(&self) -> (Vec<(Vec<String>, String)>, Vec<F>) {
         let input_tables = self
             .cs
             .lookups()
@@ -264,7 +276,7 @@ where
                 (input_lines, inputs, table_lines, tables)
             })
             .collect_vec();
-        izip!(input_tables, &self.data.lookup_evals)
+        let vec = izip!(input_tables, &self.data.lookup_evals)
             .flat_map(|(input_table, evals)| {
                 let (input_lines, inputs, table_lines, tables) = input_table;
                 let (input_0, rest_inputs) = inputs.split_first().unwrap();
@@ -338,7 +350,8 @@ where
                 ]
             })
             .zip(iter::repeat("eval".to_string()))
-            .collect_vec()
+            .collect_vec();
+        (vec, Vec::new())
     }
 
     fn eval(&self, column_type: impl Into<Any>, column_index: usize, rotation: i32) -> String {
@@ -358,6 +371,30 @@ where
         let result = self.evaluate(expression);
         self.reset();
         result
+    }
+
+    #[allow(dead_code)]
+    fn collect_constants(&self, expression: &Expression<F>, constants: &mut Vec<F>) {
+        match expression {
+            Expression::Constant(constant) => {
+                constants.push(*constant);
+            }
+            Expression::Negated(inner) => {
+                self.collect_constants(inner, constants);
+            }
+            Expression::Sum(lhs, rhs) => {
+                self.collect_constants(lhs, constants);
+                self.collect_constants(rhs, constants);
+            }
+            Expression::Product(lhs, rhs) => {
+                self.collect_constants(lhs, constants);
+                self.collect_constants(rhs, constants);
+            }
+            Expression::Scaled(inner, _scalar) => {
+                self.collect_constants(inner, constants);
+            }
+            _ => {}
+        }
     }
 
     fn evaluate(&self, expression: &Expression<F>) -> (Vec<String>, String) {
