@@ -14,7 +14,10 @@ use halo2_proofs::{
 };
 use itertools::{chain, Itertools};
 use ruint::aliases::U256;
-use std::fmt::{self, Debug};
+use std::{
+    collections::HashMap,
+    fmt::{self, Debug},
+};
 
 mod evaluator;
 mod pcs;
@@ -240,7 +243,8 @@ impl<'a> SolidityGenerator<'a> {
 
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
 
-        let result: (Vec<(Vec<String>, String)>, Vec<bn256::Fr>) = evaluator.lookup_computations();
+        let result: (Vec<(Vec<String>, String)>, Vec<bn256::Fr>) =
+            evaluator.lookup_computations(None);
 
         let const_lookup_input_expressions =
             result.1.into_iter().map(fr_to_u256).collect::<Vec<_>>();
@@ -260,14 +264,37 @@ impl<'a> SolidityGenerator<'a> {
 
         let vk = self.generate_vk();
         let vk_len = vk.len();
-        let vk_mptr = Ptr::memory(self.estimate_static_working_memory_size(&vk, proof_cptr));
+        let vk_m = self.estimate_static_working_memory_size(&vk, proof_cptr);
+        let vk_mptr = Ptr::memory(vk_m);
+        let mut vk_lookup_const_table: HashMap<ruint::Uint<256, 4>, Ptr> = HashMap::new();
+        // if separate then create a hashmap of vk.const_lookup_input_expressions values to its vk memory location.
+        if separate {
+            // create hashmap of vk.const_lookup_input_expressions values to its vk memory location.
+            let offset = vk_len + vk_m - (vk.const_lookup_input_expressions.len() * 0x20);
+            print!("offset: {:?}\n", offset);
+            print!("vk_mptr: {:?}\n", vk_m);
+            print!(
+                "vk.const_lookup_input_expressions: {:?}\n",
+                vk.const_lookup_input_expressions
+            );
+            println!("vk_len {:?}", vk_len);
+            // keys to the map are the values of vk.const_lookup_input_expressions and values are the memory location of the vk.const_lookup_input_expressions.
+            vk.const_lookup_input_expressions
+                .iter()
+                .enumerate()
+                .for_each(|(idx, _)| {
+                    let mptr = offset + (0x20 * idx);
+                    let mptr = Ptr::memory(mptr);
+                    vk_lookup_const_table.insert(vk.const_lookup_input_expressions[idx], mptr);
+                });
+        }
         let data = Data::new(&self.meta, &vk, vk_mptr, proof_cptr);
 
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
         let quotient_eval_numer_computations = chain![
             evaluator.gate_computations(),
             evaluator.permutation_computations(),
-            evaluator.lookup_computations().0
+            evaluator.lookup_computations(Some(vk_lookup_const_table)).0
         ]
         .enumerate()
         .map(|(idx, (mut lines, var))| {

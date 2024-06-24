@@ -10,6 +10,7 @@ hex = "0.4.3"
 ruint = "1.8.0"
 sha3 = "0.10"
 itertools = "0.11.0"
+regex = { version = "1", default_features = false }
 
 # Remove when `vk.transcript_repr()` is ready for usage.
 blake2b_simd = "1"

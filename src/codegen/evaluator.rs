@@ -9,6 +9,7 @@ use halo2_proofs::{
     },
 };
 use itertools::{chain, izip, Itertools};
+use regex::Regex;
 use ruint::aliases::U256;
 use std::{cell::RefCell, cmp::Ordering, collections::HashMap, iter};
 
@@ -121,9 +122,12 @@ where
     }
 
     #[cfg(feature = "mv-lookup")]
-    pub fn lookup_computations(&self) -> (Vec<(Vec<String>, String)>, Vec<F>) {
+    pub fn lookup_computations(
+        &self,
+        vk_lookup_const_table: Option<HashMap<ruint::Uint<256, 4>, super::util::Ptr>>,
+    ) -> (Vec<(Vec<String>, String)>, Vec<F>) {
         let evaluate = |expressions: &Vec<_>| {
-            println!("expressions: {:?}", expressions);
+            // println!("expressions: {:?}", expressions);
             let (lines, inputs) = expressions
                 .iter()
                 .map(|expression| self.evaluate(expression))
@@ -157,6 +161,24 @@ where
                 (inputs, table)
             })
             .collect_vec();
+        // Remove duplicates while preserving order
+        let mut unique_inputs_consts = Vec::new();
+        for const_value in inputs_consts.clone() {
+            if !unique_inputs_consts.contains(&const_value) {
+                unique_inputs_consts.push(const_value);
+            }
+        }
+        let lookup_const_table = if let Some(vk_lookup_const_table) = vk_lookup_const_table {
+            // map all the keys to u256_string
+            let vk_lookup_const_table: HashMap<String, super::util::Ptr> = vk_lookup_const_table
+                .iter()
+                .map(|(key, value)| (u256_string(*key), *value))
+                .collect();
+            Some(vk_lookup_const_table)
+        } else {
+            None
+        };
+
         let vec = izip!(inputs_tables, &self.data.lookup_evals)
             .flat_map(|(inputs_tables, evals)| {
                 let (inputs, (table_lines, tables)) = inputs_tables.clone();
@@ -164,7 +186,6 @@ where
                 let (table_0, rest_tables) = tables.split_first().unwrap();
                 let (phi, phi_next, m) = evals;
                 // print line the input tables
-                println!("inputs: {:?}", inputs.clone());
                 [
                     vec![
                         format!("let l_0 := mload(L_0_MPTR)"),
@@ -192,6 +213,37 @@ where
                         izip!(0.., inputs.into_iter()).flat_map(|(idx, (input_lines, inputs))| {
                             let (input_0, rest_inputs) = inputs.split_first().unwrap();
                             let ident = format!("input_{idx}");
+                            let hex_regex = Regex::new(r":= (0x[0-9a-fA-F]+)").unwrap();
+                            // use regex to replace hex constants with mload format
+                            let input_lines =
+                                if let Some(lookup_const_table) = lookup_const_table.clone() {
+                                    // println!("lookup_const_table: {:?}", lookup_const_table);
+                                    let modified_input_lines: Vec<String> = input_lines
+                                        .into_iter()
+                                        .map(|line| {
+                                            hex_regex
+                                                .replace_all(&line, |caps: &regex::Captures| {
+                                                    if let Some(hex_str) = caps.get(1) {
+                                                        println!("hex_str: {:?}", hex_str);
+                                                        if let Some(ptr) =
+                                                            lookup_const_table.get(hex_str.as_str())
+                                                        {
+                                                            format!(":= mload({ptr})")
+                                                        } else {
+                                                            hex_str.as_str().to_string()
+                                                        }
+                                                    } else {
+                                                        line.to_string()
+                                                    }
+                                                })
+                                                .to_string()
+                                        })
+                                        .collect();
+                                    modified_input_lines
+                                } else {
+                                    input_lines
+                                };
+                            // use regex to
                             chain![
                                 [format!("let {ident}")],
                                 code_block::<1, false>(chain![
@@ -250,11 +302,19 @@ where
             })
             .zip(iter::repeat("eval".to_string()))
             .collect_vec();
-        (vec, inputs_consts)
+        (vec, unique_inputs_consts)
     }
 
     #[cfg(not(feature = "mv-lookup"))]
-    pub fn lookup_computations(&self) -> (Vec<(Vec<String>, String)>, Vec<F>) {
+    pub fn lookup_computations(
+        &self,
+        _vk_lookup_const_table: Option<HashMap<ruint::Uint<256, 4>, super::util::Ptr>>,
+    ) -> (Vec<(Vec<String>, String)>, Vec<F>) {
+        let _ = |expressions: &Vec<_>, constants: &mut Vec<F>| {
+            expressions.iter().for_each(|expression| {
+                self.collect_constants(expression, constants);
+            });
+        };
         let input_tables = self
             .cs
             .lookups()
@@ -373,6 +433,7 @@ where
         result
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     #[allow(dead_code)]
     fn collect_constants(&self, expression: &Expression<F>, constants: &mut Vec<F>) {
         match expression {
