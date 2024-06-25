@@ -18,6 +18,9 @@ jobs:
         with:
           toolchain: stable
           profile: minimal
+          
+      - name: Check Rust version
+        run: rustc --version && cargo --version
 
       - uses: Swatinem/rust-cache@v1
         with:
