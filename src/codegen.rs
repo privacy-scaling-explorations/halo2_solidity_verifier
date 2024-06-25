@@ -266,18 +266,11 @@ impl<'a> SolidityGenerator<'a> {
         let vk_len = vk.len();
         let vk_m = self.estimate_static_working_memory_size(&vk, proof_cptr);
         let vk_mptr = Ptr::memory(vk_m);
-        let mut vk_lookup_const_table: HashMap<ruint::Uint<256, 4>, Ptr> = HashMap::new();
         // if separate then create a hashmap of vk.const_lookup_input_expressions values to its vk memory location.
-        if separate {
+        let vk_lookup_const_table: Option<HashMap<ruint::Uint<256, 4>, Ptr>> = if separate {
+            let mut vk_lookup_const_table: HashMap<ruint::Uint<256, 4>, Ptr> = HashMap::new();
             // create hashmap of vk.const_lookup_input_expressions values to its vk memory location.
             let offset = vk_len + vk_m - (vk.const_lookup_input_expressions.len() * 0x20);
-            print!("offset: {:?}\n", offset);
-            print!("vk_mptr: {:?}\n", vk_m);
-            print!(
-                "vk.const_lookup_input_expressions: {:?}\n",
-                vk.const_lookup_input_expressions
-            );
-            println!("vk_len {:?}", vk_len);
             // keys to the map are the values of vk.const_lookup_input_expressions and values are the memory location of the vk.const_lookup_input_expressions.
             vk.const_lookup_input_expressions
                 .iter()
@@ -287,14 +280,17 @@ impl<'a> SolidityGenerator<'a> {
                     let mptr = Ptr::memory(mptr);
                     vk_lookup_const_table.insert(vk.const_lookup_input_expressions[idx], mptr);
                 });
-        }
+            Some(vk_lookup_const_table)
+        } else {
+            None
+        };
         let data = Data::new(&self.meta, &vk, vk_mptr, proof_cptr);
 
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
         let quotient_eval_numer_computations = chain![
             evaluator.gate_computations(),
             evaluator.permutation_computations(),
-            evaluator.lookup_computations(Some(vk_lookup_const_table)).0
+            evaluator.lookup_computations(vk_lookup_const_table).0
         ]
         .enumerate()
         .map(|(idx, (mut lines, var))| {
