@@ -224,7 +224,6 @@ where
                                             hex_regex
                                                 .replace_all(&line, |caps: &regex::Captures| {
                                                     if let Some(hex_str) = caps.get(1) {
-                                                        println!("hex_str: {:?}", hex_str);
                                                         if let Some(ptr) =
                                                             lookup_const_table.get(hex_str.as_str())
                                                         {
