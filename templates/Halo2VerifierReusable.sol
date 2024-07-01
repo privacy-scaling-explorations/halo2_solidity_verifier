@@ -220,8 +220,8 @@ contract Halo2Verifier {
             let success := true
 
             {
-                // Load vk_digest, num_instances and NUM_ADVICES_USER_CHALLENGES_OFFSET of vk into memory
-                extcodecopy(vk, VK_MPTR, 0x00, 0x60) 
+                // Copy full vk into memory
+                extcodecopy(vk, VK_MPTR, 0x00, {{ vk_len|hex() }})
                 // Check valid length of proof
                 success := and(success, eq({{ proof_len|hex() }}, calldataload(sub(PROOF_LEN_CPTR, 0x6014F51900))))
 

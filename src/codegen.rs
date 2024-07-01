@@ -367,10 +367,6 @@ impl<'a> SolidityGenerator<'a> {
         let offset = vk_m
             + (vk.constants.len() * 0x20)
             + (vk.fixed_comms.len() + vk.permutation_comms.len()) * 0x40;
-        let arr_mptr = vk_m
-            + (vk.constants.len() * 0x20)
-            + (vk.fixed_comms.len() + vk.permutation_comms.len()) * 0x40
-            + (vk.const_lookup_input_expressions.len() * 0x20);
         // keys to the map are the values of vk.const_lookup_input_expressions and values are the memory location of the vk.const_lookup_input_expressions.
         vk.const_lookup_input_expressions
             .iter()
