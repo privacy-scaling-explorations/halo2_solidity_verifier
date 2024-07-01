@@ -399,7 +399,8 @@ impl Data {
         let permutation_comm_mptr = fixed_comm_mptr + 2 * vk.fixed_comms.len();
         let challenge_mptr = permutation_comm_mptr
             + (2 * vk.permutation_comms.len())
-            + vk.const_lookup_input_expressions.len();
+            + vk.const_lookup_input_expressions.len()
+            + (2 * vk.num_advices_user_challenges.len() + 1);
         let theta_mptr = challenge_mptr + meta.challenge_indices.len();
 
         let advice_comm_start = proof_cptr;

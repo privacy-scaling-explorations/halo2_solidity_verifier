@@ -18,6 +18,7 @@ use std::{
     collections::HashMap,
     fmt::{self, Debug},
 };
+use template::Halo2VerifierReusable;
 
 mod evaluator;
 mod pcs;
@@ -137,7 +138,7 @@ impl<'a> SolidityGenerator<'a> {
 impl<'a> SolidityGenerator<'a> {
     /// Render `Halo2Verifier.sol` with verifying key embedded into writer.
     pub fn render_into(&self, verifier_writer: &mut impl fmt::Write) -> Result<(), fmt::Error> {
-        self.generate_verifier(false).render(verifier_writer)
+        self.generate_verifier().render(verifier_writer)
     }
 
     /// Render `Halo2Verifier.sol` with verifying key embedded and return it as `String`.
@@ -153,8 +154,8 @@ impl<'a> SolidityGenerator<'a> {
         verifier_writer: &mut impl fmt::Write,
         vk_writer: &mut impl fmt::Write,
     ) -> Result<(), fmt::Error> {
-        self.generate_verifier(true).render(verifier_writer)?;
-        self.generate_vk().render(vk_writer)?;
+        self.generate_separate_verifier().render(verifier_writer)?;
+        self.generate_vk(true).render(vk_writer)?;
         Ok(())
     }
 
@@ -166,8 +167,8 @@ impl<'a> SolidityGenerator<'a> {
         Ok((verifier_output, vk_output))
     }
 
-    fn generate_vk(&self) -> Halo2VerifyingKey {
-        let constants = {
+    fn generate_vk(&self, separate: bool) -> Halo2VerifyingKey {
+        let mut constants = {
             let domain = self.vk.get_domain();
             let vk_digest = fr_to_u256(vk_transcript_repr(self.vk));
             let num_instances = U256::from(self.num_instances);
@@ -196,6 +197,7 @@ impl<'a> SolidityGenerator<'a> {
             let g1 = g1_to_u256s(g1);
             let g2 = g2_to_u256s(self.params.g2());
             let neg_s_g2 = g2_to_u256s(-self.params.s_g2());
+
             vec![
                 ("vk_digest", vk_digest),
                 ("num_instances", num_instances),
@@ -229,17 +231,23 @@ impl<'a> SolidityGenerator<'a> {
             .tuples()
             .collect();
 
-        let proof_cptr = Ptr::calldata(if true { 0x84 } else { 0x64 });
+        let proof_cptr = Ptr::calldata(0x64);
 
-        let dummy_vk = Halo2VerifyingKey {
+        let attached_vk = Halo2VerifyingKey {
             constants: constants.clone(),
             fixed_comms: fixed_comms.clone(),
             permutation_comms: permutation_comms.clone(),
             const_lookup_input_expressions: vec![],
+            num_advices_user_challenges: vec![],
         };
 
-        let vk_mptr = Ptr::memory(self.estimate_static_working_memory_size(&dummy_vk, proof_cptr));
-        let data = Data::new(&self.meta, &dummy_vk, vk_mptr, proof_cptr);
+        if !separate {
+            return attached_vk;
+        }
+
+        let vk_mptr =
+            Ptr::memory(self.estimate_static_working_memory_size(&attached_vk, proof_cptr));
+        let data = Data::new(&self.meta, &attached_vk, vk_mptr, proof_cptr);
 
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
 
@@ -249,48 +257,61 @@ impl<'a> SolidityGenerator<'a> {
         let const_lookup_input_expressions =
             result.1.into_iter().map(fr_to_u256).collect::<Vec<_>>();
 
+        let num_advices_user_challenges_offset = (constants.len() * 0x20)
+            + (fixed_comms.len() + permutation_comms.len()) * 0x40
+            + (const_lookup_input_expressions.len() * 0x20)
+            + 0x20;
+
+        // insert it at position 3 of the constants.
+        constants.insert(
+            2,
+            (
+                "num_advices_user_challenges_offset",
+                U256::from(num_advices_user_challenges_offset),
+            ),
+        );
+
+        let num_advices = self.meta.num_advices();
+        let num_user_challenges = self.meta.num_challenges();
+        // truncate the last elements of num_user_challenges to match the length of num_advices.
+        let num_user_challenges = num_user_challenges
+            .iter()
+            .take(num_advices.len())
+            .copied()
+            .collect::<Vec<_>>();
+        // Create a new vec of type of Vec<usize, usize> with the values of num_advices and num_user_challenges.
+        let num_advices_user_challenges: Vec<(U256, U256)> = num_advices
+            .iter()
+            .zip(num_user_challenges.iter())
+            .map(|(num_advices, num_user_challenges)| {
+                (U256::from(*num_advices), U256::from(*num_user_challenges))
+            })
+            .collect_vec();
+
         Halo2VerifyingKey {
             constants,
             fixed_comms,
             permutation_comms,
             const_lookup_input_expressions,
+            num_advices_user_challenges,
         }
     }
 
-    fn generate_verifier(&self, separate: bool) -> Halo2Verifier {
-        let proof_cptr = Ptr::calldata(if separate { 0x84 } else { 0x64 });
+    fn generate_verifier(&self) -> Halo2Verifier {
+        let proof_cptr = Ptr::calldata(0x64);
 
-        let proof_len_cptr = Ptr::calldata(if separate { 0x6014F51964 } else { 0x6014F51944 });
+        let proof_len_cptr = Ptr::calldata(0x6014F51944);
 
-        let vk = self.generate_vk();
-        let vk_len = vk.len();
+        let vk = self.generate_vk(false);
         let vk_m = self.estimate_static_working_memory_size(&vk, proof_cptr);
         let vk_mptr = Ptr::memory(vk_m);
-        // if separate then create a hashmap of vk.const_lookup_input_expressions values to its vk memory location.
-        let vk_lookup_const_table: Option<HashMap<ruint::Uint<256, 4>, Ptr>> = if separate {
-            let mut vk_lookup_const_table: HashMap<ruint::Uint<256, 4>, Ptr> = HashMap::new();
-            // create hashmap of vk.const_lookup_input_expressions values to its vk memory location.
-            let offset = vk_len + vk_m - (vk.const_lookup_input_expressions.len() * 0x20);
-            // keys to the map are the values of vk.const_lookup_input_expressions and values are the memory location of the vk.const_lookup_input_expressions.
-            vk.const_lookup_input_expressions
-                .iter()
-                .enumerate()
-                .for_each(|(idx, _)| {
-                    let mptr = offset + (0x20 * idx);
-                    let mptr = Ptr::memory(mptr);
-                    vk_lookup_const_table.insert(vk.const_lookup_input_expressions[idx], mptr);
-                });
-            Some(vk_lookup_const_table)
-        } else {
-            None
-        };
         let data = Data::new(&self.meta, &vk, vk_mptr, proof_cptr);
 
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
         let quotient_eval_numer_computations = chain![
             evaluator.gate_computations(),
             evaluator.permutation_computations(),
-            evaluator.lookup_computations(vk_lookup_const_table).0
+            evaluator.lookup_computations(None).0
         ]
         .enumerate()
         .map(|(idx, (mut lines, var))| {
@@ -313,12 +334,85 @@ impl<'a> SolidityGenerator<'a> {
 
         Halo2Verifier {
             scheme: self.scheme,
-            embedded_vk: (!separate).then_some(vk),
-            vk_len,
+            embedded_vk: vk,
             vk_mptr,
             num_neg_lagranges: self.meta.rotation_last.unsigned_abs() as usize,
             num_advices: self.meta.num_advices(),
             num_challenges: self.meta.num_challenges(),
+            num_evals: self.meta.num_evals,
+            num_quotients: self.meta.num_quotients,
+            proof_cptr,
+            proof_len_cptr,
+            quotient_comm_cptr: data.quotient_comm_cptr,
+            proof_len: self.meta.proof_len(self.scheme),
+            challenge_mptr: data.challenge_mptr,
+            theta_mptr: data.theta_mptr,
+            quotient_eval_numer_computations,
+            pcs_computations,
+        }
+    }
+
+    fn generate_separate_verifier(&self) -> Halo2VerifierReusable {
+        let proof_cptr = Ptr::calldata(0x84);
+
+        let proof_len_cptr = Ptr::calldata(0x6014F51964);
+
+        let vk = self.generate_vk(true);
+        let vk_len = vk.len();
+        let vk_m = self.estimate_static_working_memory_size(&vk, proof_cptr);
+        let vk_mptr = Ptr::memory(vk_m);
+        // if separate then create a hashmap of vk.const_lookup_input_expressions values to its vk memory location.
+        let mut vk_lookup_const_table: HashMap<ruint::Uint<256, 4>, Ptr> = HashMap::new();
+        // create hashmap of vk.const_lookup_input_expressions values to its vk memory location.
+        let offset = vk_m
+            + (vk.constants.len() * 0x20)
+            + (vk.fixed_comms.len() + vk.permutation_comms.len()) * 0x40;
+        let arr_mptr = vk_m
+            + (vk.constants.len() * 0x20)
+            + (vk.fixed_comms.len() + vk.permutation_comms.len()) * 0x40
+            + (vk.const_lookup_input_expressions.len() * 0x20);
+        // keys to the map are the values of vk.const_lookup_input_expressions and values are the memory location of the vk.const_lookup_input_expressions.
+        vk.const_lookup_input_expressions
+            .iter()
+            .enumerate()
+            .for_each(|(idx, _)| {
+                let mptr = offset + (0x20 * idx);
+                let mptr = Ptr::memory(mptr);
+                vk_lookup_const_table.insert(vk.const_lookup_input_expressions[idx], mptr);
+            });
+
+        let data = Data::new(&self.meta, &vk, vk_mptr, proof_cptr);
+
+        let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
+        let quotient_eval_numer_computations = chain![
+            evaluator.gate_computations(),
+            evaluator.permutation_computations(),
+            evaluator.lookup_computations(Some(vk_lookup_const_table)).0
+        ]
+        .enumerate()
+        .map(|(idx, (mut lines, var))| {
+            let line = if idx == 0 {
+                format!("quotient_eval_numer := {var}")
+            } else {
+                format!(
+                    "quotient_eval_numer := addmod(mulmod(quotient_eval_numer, y, r), {var}, r)"
+                )
+            };
+            lines.push(line);
+            lines
+        })
+        .collect();
+
+        let pcs_computations = match self.scheme {
+            Bdfg21 => bdfg21_computations(&self.meta, &data),
+            Gwc19 => unimplemented!(),
+        };
+
+        Halo2VerifierReusable {
+            scheme: self.scheme,
+            vk_len,
+            vk_mptr,
+            num_neg_lagranges: self.meta.rotation_last.unsigned_abs() as usize,
             num_evals: self.meta.num_evals,
             num_quotients: self.meta.num_quotients,
             proof_cptr,

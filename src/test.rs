@@ -65,7 +65,7 @@ fn run_render<C: halo2::TestCircuit<Fr>>() {
 
     let (gas_cost, output) = evm.call(verifier_address, encode_calldata(None, &proof, &instances));
     assert_eq!(output, [vec![0; 31], vec![1]].concat());
-    println!("Gas cost: {gas_cost}");
+    println!("Gas cost conjoined: {gas_cost}");
 }
 
 fn run_render_separately<C: halo2::TestCircuit<Fr>>() {
@@ -105,7 +105,7 @@ fn run_render_separately<C: halo2::TestCircuit<Fr>>() {
             encode_calldata(Some(vk_address.into()), &proof, &instances),
         );
         assert_eq!(output, [vec![0; 31], vec![1]].concat());
-        println!("Gas cost: {gas_cost}");
+        println!("Gas cost separate: {gas_cost}");
     }
 }
 

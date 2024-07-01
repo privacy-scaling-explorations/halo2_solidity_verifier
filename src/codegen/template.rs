@@ -10,6 +10,7 @@ use std::fmt;
 #[template(path = "Halo2VerifyingKey.sol")]
 pub(crate) struct Halo2VerifyingKey {
     pub(crate) constants: Vec<(&'static str, U256)>,
+    pub(crate) num_advices_user_challenges: Vec<(U256, U256)>,
     pub(crate) fixed_comms: Vec<(U256, U256)>,
     pub(crate) permutation_comms: Vec<(U256, U256)>,
     pub(crate) const_lookup_input_expressions: Vec<U256>,
@@ -20,6 +21,7 @@ impl Halo2VerifyingKey {
         (self.constants.len() * 0x20)
             + (self.fixed_comms.len() + self.permutation_comms.len()) * 0x40
             + (self.const_lookup_input_expressions.len() * 0x20)
+            + ((self.num_advices_user_challenges.len() * 0x40) + 0x20)
     }
 }
 
@@ -27,8 +29,7 @@ impl Halo2VerifyingKey {
 #[template(path = "Halo2Verifier.sol")]
 pub(crate) struct Halo2Verifier {
     pub(crate) scheme: BatchOpenScheme,
-    pub(crate) embedded_vk: Option<Halo2VerifyingKey>,
-    pub(crate) vk_len: usize,
+    pub(crate) embedded_vk: Halo2VerifyingKey,
     pub(crate) proof_len: usize,
     pub(crate) vk_mptr: Ptr,
     pub(crate) challenge_mptr: Ptr,
@@ -45,6 +46,25 @@ pub(crate) struct Halo2Verifier {
     pub(crate) pcs_computations: Vec<Vec<String>>,
 }
 
+#[derive(Template)]
+#[template(path = "Halo2VerifierReusable.sol")]
+pub(crate) struct Halo2VerifierReusable {
+    pub(crate) scheme: BatchOpenScheme,
+    pub(crate) vk_len: usize,
+    pub(crate) proof_len: usize,
+    pub(crate) vk_mptr: Ptr,
+    pub(crate) challenge_mptr: Ptr,
+    pub(crate) theta_mptr: Ptr,
+    pub(crate) proof_cptr: Ptr,
+    pub(crate) proof_len_cptr: Ptr,
+    pub(crate) quotient_comm_cptr: Ptr,
+    pub(crate) num_neg_lagranges: usize,
+    pub(crate) num_evals: usize,
+    pub(crate) num_quotients: usize,
+    pub(crate) quotient_eval_numer_computations: Vec<Vec<String>>,
+    pub(crate) pcs_computations: Vec<Vec<String>>,
+}
+
 impl Halo2VerifyingKey {
     pub(crate) fn render(&self, writer: &mut impl fmt::Write) -> Result<(), fmt::Error> {
         self.render_into(writer).map_err(|err| match err {
@@ -55,6 +75,15 @@ impl Halo2VerifyingKey {
 }
 
 impl Halo2Verifier {
+    pub(crate) fn render(&self, writer: &mut impl fmt::Write) -> Result<(), fmt::Error> {
+        self.render_into(writer).map_err(|err| match err {
+            Error::Fmt(err) => err,
+            _ => unreachable!(),
+        })
+    }
+}
+
+impl Halo2VerifierReusable {
     pub(crate) fn render(&self, writer: &mut impl fmt::Write) -> Result<(), fmt::Error> {
         self.render_into(writer).map_err(|err| match err {
             Error::Fmt(err) => err,
