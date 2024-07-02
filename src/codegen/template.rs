@@ -51,15 +51,11 @@ pub(crate) struct Halo2Verifier {
 pub(crate) struct Halo2VerifierReusable {
     pub(crate) scheme: BatchOpenScheme,
     pub(crate) vk_len: usize,
-    pub(crate) proof_len: usize,
     pub(crate) vk_mptr: Ptr,
     pub(crate) challenge_mptr: Ptr,
     pub(crate) theta_mptr: Ptr,
-    pub(crate) proof_cptr: Ptr,
-    pub(crate) quotient_comm_cptr: Ptr,
     pub(crate) num_neg_lagranges: usize,
     pub(crate) num_evals: usize,
-    pub(crate) num_quotients: usize,
     pub(crate) quotient_eval_numer_computations: Vec<Vec<String>>,
     pub(crate) pcs_computations: Vec<Vec<String>>,
 }

@@ -244,9 +244,9 @@ impl<'a> SolidityGenerator<'a> {
         }
 
         let vk_mptr = Ptr::memory(
-            self.estimate_static_working_memory_size(&attached_vk, Ptr::calldata(0x64)),
+            self.estimate_static_working_memory_size(&attached_vk, Ptr::calldata(0x84)),
         );
-        let data = Data::new(&self.meta, &attached_vk, vk_mptr, Ptr::calldata(0x64));
+        let data = Data::new(&self.meta, &attached_vk, vk_mptr, Ptr::calldata(0x84));
 
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
 
@@ -260,6 +260,27 @@ impl<'a> SolidityGenerator<'a> {
 
         // insert it at position 3 of the constants.
         constants.insert(2, ("instance_cptr", instance_cptr));
+
+        let first_quotient_x_cptr = data.quotient_comm_cptr;
+
+        constants.insert(
+            2,
+            (
+                "first_quotient_x_cptr",
+                U256::from(first_quotient_x_cptr.value().as_usize()),
+            ),
+        );
+
+        let last_quotient_x_cptr = first_quotient_x_cptr + 2 * (self.meta.num_quotients - 1);
+        println!("num_quotients: {}", self.meta.num_quotients);
+
+        constants.insert(
+            2,
+            (
+                "last_quotient_x_cptr",
+                U256::from(last_quotient_x_cptr.value().as_usize()),
+            ),
+        );
 
         let num_advices_user_challenges_offset = (constants.len() * 0x20)
             + (fixed_comms.len() + permutation_comms.len()) * 0x40
@@ -412,11 +433,6 @@ impl<'a> SolidityGenerator<'a> {
             vk_mptr,
             num_neg_lagranges: self.meta.rotation_last.unsigned_abs() as usize,
             num_evals: self.meta.num_evals,
-            num_quotients: self.meta.num_quotients,
-            proof_cptr,
-            // proof_len_cptr,
-            quotient_comm_cptr: data.quotient_comm_cptr,
-            proof_len: self.meta.proof_len(self.scheme),
             challenge_mptr: data.challenge_mptr,
             theta_mptr: data.theta_mptr,
             quotient_eval_numer_computations,

@@ -6,33 +6,32 @@ contract Halo2Verifier {
     uint256 internal constant    PROOF_LEN_CPTR = 0x64;
     uint256 internal constant        PROOF_CPTR = 0x84;
 
-    uint256 internal constant FIRST_QUOTIENT_X_CPTR = {{ quotient_comm_cptr }};
-    uint256 internal constant  LAST_QUOTIENT_X_CPTR = {{ quotient_comm_cptr + 2 * (num_quotients - 1) }};
-
     uint256 internal constant                VK_MPTR = {{ vk_mptr }};
     uint256 internal constant         VK_DIGEST_MPTR = {{ vk_mptr }};
     uint256 internal constant     NUM_INSTANCES_MPTR = {{ vk_mptr + 1 }};
     uint256 internal constant NUM_ADVICES_USER_CHALLENGES_OFFSET = {{ vk_mptr + 2 }};
-    uint256 internal constant                 INSTANCE_CPTR = {{ vk_mptr + 3 }};
-    uint256 internal constant                 K_MPTR = {{ vk_mptr + 4 }};
-    uint256 internal constant             N_INV_MPTR = {{ vk_mptr + 5 }};
-    uint256 internal constant             OMEGA_MPTR = {{ vk_mptr + 6 }};
-    uint256 internal constant         OMEGA_INV_MPTR = {{ vk_mptr + 7 }};
-    uint256 internal constant    OMEGA_INV_TO_L_MPTR = {{ vk_mptr + 8 }};
-    uint256 internal constant   HAS_ACCUMULATOR_MPTR = {{ vk_mptr + 9 }};
-    uint256 internal constant        ACC_OFFSET_MPTR = {{ vk_mptr + 10 }};
-    uint256 internal constant     NUM_ACC_LIMBS_MPTR = {{ vk_mptr + 11 }};
-    uint256 internal constant NUM_ACC_LIMB_BITS_MPTR = {{ vk_mptr + 12 }};
-    uint256 internal constant              G1_X_MPTR = {{ vk_mptr + 13 }};
-    uint256 internal constant              G1_Y_MPTR = {{ vk_mptr + 14 }};
-    uint256 internal constant            G2_X_1_MPTR = {{ vk_mptr + 15 }};
-    uint256 internal constant            G2_X_2_MPTR = {{ vk_mptr + 16 }};
-    uint256 internal constant            G2_Y_1_MPTR = {{ vk_mptr + 17 }};
-    uint256 internal constant            G2_Y_2_MPTR = {{ vk_mptr + 18 }};
-    uint256 internal constant      NEG_S_G2_X_1_MPTR = {{ vk_mptr + 19 }};
-    uint256 internal constant      NEG_S_G2_X_2_MPTR = {{ vk_mptr + 20 }};
-    uint256 internal constant      NEG_S_G2_Y_1_MPTR = {{ vk_mptr + 21 }};
-    uint256 internal constant      NEG_S_G2_Y_2_MPTR = {{ vk_mptr + 22 }};
+    uint256 internal constant LAST_QUOTIENT_X_CPTR = {{ vk_mptr + 3 }};
+    uint256 internal constant FIRST_QUOTIENT_X_CPTR = {{ vk_mptr + 4 }};
+    uint256 internal constant                 INSTANCE_CPTR = {{ vk_mptr + 5 }};
+    uint256 internal constant                 K_MPTR = {{ vk_mptr + 6 }};
+    uint256 internal constant             N_INV_MPTR = {{ vk_mptr + 7 }};
+    uint256 internal constant             OMEGA_MPTR = {{ vk_mptr + 8 }};
+    uint256 internal constant         OMEGA_INV_MPTR = {{ vk_mptr + 9 }};
+    uint256 internal constant    OMEGA_INV_TO_L_MPTR = {{ vk_mptr + 10 }};
+    uint256 internal constant   HAS_ACCUMULATOR_MPTR = {{ vk_mptr + 11 }};
+    uint256 internal constant        ACC_OFFSET_MPTR = {{ vk_mptr + 12 }};
+    uint256 internal constant     NUM_ACC_LIMBS_MPTR = {{ vk_mptr + 13 }};
+    uint256 internal constant NUM_ACC_LIMB_BITS_MPTR = {{ vk_mptr + 14 }};
+    uint256 internal constant              G1_X_MPTR = {{ vk_mptr + 15 }};
+    uint256 internal constant              G1_Y_MPTR = {{ vk_mptr + 16 }};
+    uint256 internal constant            G2_X_1_MPTR = {{ vk_mptr + 17 }};
+    uint256 internal constant            G2_X_2_MPTR = {{ vk_mptr + 18 }};
+    uint256 internal constant            G2_Y_1_MPTR = {{ vk_mptr + 19 }};
+    uint256 internal constant            G2_Y_2_MPTR = {{ vk_mptr + 20 }};
+    uint256 internal constant      NEG_S_G2_X_1_MPTR = {{ vk_mptr + 21 }};
+    uint256 internal constant      NEG_S_G2_X_2_MPTR = {{ vk_mptr + 22 }};
+    uint256 internal constant      NEG_S_G2_Y_1_MPTR = {{ vk_mptr + 23 }};
+    uint256 internal constant      NEG_S_G2_Y_2_MPTR = {{ vk_mptr + 24 }};
 
     uint256 internal constant CHALLENGE_MPTR = {{ challenge_mptr }};
 
@@ -455,13 +454,13 @@ contract Halo2Verifier {
 
             // Compute quotient commitment
             {
-                mstore(0x00, calldataload(LAST_QUOTIENT_X_CPTR))
-                mstore(0x20, calldataload(add(LAST_QUOTIENT_X_CPTR, 0x20)))
+                mstore(0x00, calldataload(mload(LAST_QUOTIENT_X_CPTR)))
+                mstore(0x20, calldataload(add(mload(LAST_QUOTIENT_X_CPTR), 0x20)))
                 let x_n := mload(X_N_MPTR)
                 for
                     {
-                        let cptr := sub(LAST_QUOTIENT_X_CPTR, 0x40)
-                        let cptr_end := sub(FIRST_QUOTIENT_X_CPTR, 0x40)
+                        let cptr := sub(mload(LAST_QUOTIENT_X_CPTR), 0x40)
+                        let cptr_end := sub(mload(FIRST_QUOTIENT_X_CPTR), 0x40)
                     }
                     lt(cptr_end, cptr)
                     {}
