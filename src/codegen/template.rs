@@ -56,7 +56,6 @@ pub(crate) struct Halo2VerifierReusable {
     pub(crate) challenge_mptr: Ptr,
     pub(crate) theta_mptr: Ptr,
     pub(crate) proof_cptr: Ptr,
-    pub(crate) proof_len_cptr: Ptr,
     pub(crate) quotient_comm_cptr: Ptr,
     pub(crate) num_neg_lagranges: usize,
     pub(crate) num_evals: usize,

@@ -231,8 +231,6 @@ impl<'a> SolidityGenerator<'a> {
             .tuples()
             .collect();
 
-        let proof_cptr = Ptr::calldata(0x64);
-
         let attached_vk = Halo2VerifyingKey {
             constants: constants.clone(),
             fixed_comms: fixed_comms.clone(),
@@ -245,9 +243,10 @@ impl<'a> SolidityGenerator<'a> {
             return attached_vk;
         }
 
-        let vk_mptr =
-            Ptr::memory(self.estimate_static_working_memory_size(&attached_vk, proof_cptr));
-        let data = Data::new(&self.meta, &attached_vk, vk_mptr, proof_cptr);
+        let vk_mptr = Ptr::memory(
+            self.estimate_static_working_memory_size(&attached_vk, Ptr::calldata(0x64)),
+        );
+        let data = Data::new(&self.meta, &attached_vk, vk_mptr, Ptr::calldata(0x64));
 
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
 
@@ -256,6 +255,11 @@ impl<'a> SolidityGenerator<'a> {
 
         let const_lookup_input_expressions =
             result.1.into_iter().map(fr_to_u256).collect::<Vec<_>>();
+
+        let instance_cptr = U256::from((self.meta.proof_len(self.scheme)) + 0xa4);
+
+        // insert it at position 3 of the constants.
+        constants.insert(2, ("instance_cptr", instance_cptr));
 
         let num_advices_user_challenges_offset = (constants.len() * 0x20)
             + (fixed_comms.len() + permutation_comms.len()) * 0x40
@@ -355,8 +359,6 @@ impl<'a> SolidityGenerator<'a> {
     fn generate_separate_verifier(&self) -> Halo2VerifierReusable {
         let proof_cptr = Ptr::calldata(0x84);
 
-        let proof_len_cptr = Ptr::calldata(0x6014F51964);
-
         let vk = self.generate_vk(true);
         let vk_len = vk.len();
         let vk_m = self.estimate_static_working_memory_size(&vk, proof_cptr);
@@ -412,7 +414,7 @@ impl<'a> SolidityGenerator<'a> {
             num_evals: self.meta.num_evals,
             num_quotients: self.meta.num_quotients,
             proof_cptr,
-            proof_len_cptr,
+            // proof_len_cptr,
             quotient_comm_cptr: data.quotient_comm_cptr,
             proof_len: self.meta.proof_len(self.scheme),
             challenge_mptr: data.challenge_mptr,
