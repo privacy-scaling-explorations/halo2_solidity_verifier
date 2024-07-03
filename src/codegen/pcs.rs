@@ -272,9 +272,15 @@ pub(crate) fn bdfg21_computations(
     } else {
         "G1_Y_MPTR"
     };
+
+    let x_mptr = if separate {
+        "add(theta_mptr, 0x80)"
+    } else {
+        "X_MPTR"
+    };
     let point_computations = chain![
         [
-            "let x := mload(X_MPTR)",
+            format!("let x := mload({})", x_mptr).as_str(),
             format!("let omega := mload({})", omega).as_str(),
             format!("let omega_inv := mload({})", omega_inv).as_str(),
             "let x_pow_of_omega := mulmod(x, omega, r)"

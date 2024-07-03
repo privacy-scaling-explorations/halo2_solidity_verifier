@@ -125,6 +125,7 @@ where
     pub fn lookup_computations(
         &self,
         vk_lookup_const_table: Option<HashMap<ruint::Uint<256, 4>, super::util::Ptr>>,
+        separate: bool,
     ) -> (Vec<(Vec<String>, String)>, Vec<F>) {
         let evaluate = |expressions: &Vec<_>| {
             // println!("expressions: {:?}", expressions);
@@ -185,6 +186,15 @@ where
                 let num_inputs = inputs.len();
                 let (table_0, rest_tables) = tables.split_first().unwrap();
                 let (phi, phi_next, m) = evals;
+                // if separate then use the theta_mptr on set on the stack
+                // otherwise use the solidity constant
+                let theta = if separate { "theta_mptr" } else { "THETA_MPTR" };
+                // For all the the other pointers offset from the theta_mptr perfrom relavant add operation
+                let beta = if separate {
+                    "add(theta_mptr, 0x20)"
+                } else {
+                    "BETA_MPTR"
+                };
                 // print line the input tables
                 [
                     vec![
@@ -197,8 +207,8 @@ where
                     ],
                     chain![
                         [
-                            "let theta := mload(THETA_MPTR)",
-                            "let beta := mload(BETA_MPTR)",
+                            format!("let theta := mload({})", theta).as_str(),
+                            format!("let beta := mload({})", beta).as_str(),
                             "let table"
                         ]
                         .map(str::to_string),
@@ -308,6 +318,7 @@ where
     pub fn lookup_computations(
         &self,
         _vk_lookup_const_table: Option<HashMap<ruint::Uint<256, 4>, super::util::Ptr>>,
+        _separate: bool,
     ) -> (Vec<(Vec<String>, String)>, Vec<F>) {
         let _ = |expressions: &Vec<_>, constants: &mut Vec<F>| {
             expressions.iter().for_each(|expression| {

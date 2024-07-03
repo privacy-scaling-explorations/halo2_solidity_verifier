@@ -198,6 +198,9 @@ impl<'a> SolidityGenerator<'a> {
             let g2 = g2_to_u256s(self.params.g2());
             let neg_s_g2 = g2_to_u256s(-self.params.s_g2());
 
+            let challenges_length = self.meta.challenge_indices.len();
+            let challenges_length = U256::from(challenges_length);
+
             vec![
                 ("vk_digest", vk_digest),
                 ("num_instances", num_instances),
@@ -220,6 +223,7 @@ impl<'a> SolidityGenerator<'a> {
                 ("neg_s_g2_x_2", neg_s_g2[1]),
                 ("neg_s_g2_y_1", neg_s_g2[2]),
                 ("neg_s_g2_y_2", neg_s_g2[3]),
+                ("challenges_length", challenges_length),
             ]
         };
         let fixed_comms: Vec<(U256, U256)> = chain![self.vk.fixed_commitments()]
@@ -251,7 +255,7 @@ impl<'a> SolidityGenerator<'a> {
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
 
         let result: (Vec<(Vec<String>, String)>, Vec<bn256::Fr>) =
-            evaluator.lookup_computations(None);
+            evaluator.lookup_computations(None, false);
 
         let const_lookup_input_expressions =
             result.1.into_iter().map(fr_to_u256).collect::<Vec<_>>();
@@ -354,7 +358,7 @@ impl<'a> SolidityGenerator<'a> {
         let quotient_eval_numer_computations = chain![
             evaluator.gate_computations(),
             evaluator.permutation_computations(),
-            evaluator.lookup_computations(None).0
+            evaluator.lookup_computations(None, false).0
         ]
         .enumerate()
         .map(|(idx, (mut lines, var))| {
@@ -423,7 +427,9 @@ impl<'a> SolidityGenerator<'a> {
         let quotient_eval_numer_computations = chain![
             evaluator.gate_computations(),
             evaluator.permutation_computations(),
-            evaluator.lookup_computations(Some(vk_lookup_const_table)).0
+            evaluator
+                .lookup_computations(Some(vk_lookup_const_table), true)
+                .0
         ]
         .enumerate()
         .map(|(idx, (mut lines, var))| {
