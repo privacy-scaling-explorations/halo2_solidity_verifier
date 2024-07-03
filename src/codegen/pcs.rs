@@ -203,7 +203,11 @@ pub(crate) fn rotation_sets(queries: &[Query]) -> (BTreeSet<i32>, Vec<RotationSe
     (superset, sets)
 }
 
-pub(crate) fn bdfg21_computations(meta: &ConstraintSystemMeta, data: &Data) -> Vec<Vec<String>> {
+pub(crate) fn bdfg21_computations(
+    meta: &ConstraintSystemMeta,
+    data: &Data,
+    separate: bool,
+) -> Vec<Vec<String>> {
     let queries = queries(meta, data);
     let (superset, sets) = rotation_sets(&queries);
     let min_rot = *superset.first().unwrap();
@@ -244,11 +248,35 @@ pub(crate) fn bdfg21_computations(meta: &ConstraintSystemMeta, data: &Data) -> V
     let r_evals = Word::range(r_eval_mptr).take(sets.len()).collect_vec();
     let sums = Word::range(sum_mptr).take(sets.len()).collect_vec();
 
+    // if separate then we load in omega and omega_inv from vk_mptr + hardcoded offset.
+    // Otherwise we load in omega and omega_inv from the solidity constants.
+
+    let omega = if separate {
+        "add(vk_mptr, 0x140)"
+    } else {
+        "OMEGA_MPTR"
+    };
+    let omega_inv = if separate {
+        "add(vk_mptr, 0x160)"
+    } else {
+        "OMEGA_INV_MPTR"
+    };
+
+    let g1_x = if separate {
+        "add(vk_mptr, 0x0220)"
+    } else {
+        "G1_X_MPTR"
+    };
+    let g1_y = if separate {
+        "add(vk_mptr, 0x0240)"
+    } else {
+        "G1_Y_MPTR"
+    };
     let point_computations = chain![
         [
             "let x := mload(X_MPTR)",
-            "let omega := mload(OMEGA_MPTR)",
-            "let omega_inv := mload(OMEGA_INV_MPTR)",
+            format!("let omega := mload({})", omega).as_str(),
+            format!("let omega_inv := mload({})", omega_inv).as_str(),
             "let x_pow_of_omega := mulmod(x, omega, r)"
         ]
         .map(str::to_string),
@@ -606,8 +634,8 @@ pub(crate) fn bdfg21_computations(meta: &ConstraintSystemMeta, data: &Data) -> V
             .collect_vec()
         }),
         [
-            format!("mstore(0x80, mload(G1_X_MPTR))"),
-            format!("mstore(0xa0, mload(G1_Y_MPTR))"),
+            format!("mstore(0x80, mload({}))", g1_x),
+            format!("mstore(0xa0, mload({}))", g1_y),
             format!("success := ec_mul_tmp(success, sub(r, mload(R_EVAL_MPTR)))"),
             format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
             format!("mstore(0x80, {})", w.x()),

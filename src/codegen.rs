@@ -243,10 +243,10 @@ impl<'a> SolidityGenerator<'a> {
             return attached_vk;
         }
 
-        let vk_mptr = Ptr::memory(
+        let vk_mptr_mock = Ptr::memory(
             self.estimate_static_working_memory_size(&attached_vk, Ptr::calldata(0x84)),
         );
-        let data = Data::new(&self.meta, &attached_vk, vk_mptr, Ptr::calldata(0x84));
+        let data = Data::new(&self.meta, &attached_vk, vk_mptr_mock, Ptr::calldata(0x84));
 
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
 
@@ -272,7 +272,6 @@ impl<'a> SolidityGenerator<'a> {
         );
 
         let last_quotient_x_cptr = first_quotient_x_cptr + 2 * (self.meta.num_quotients - 1);
-        println!("num_quotients: {}", self.meta.num_quotients);
 
         constants.insert(
             2,
@@ -282,6 +281,15 @@ impl<'a> SolidityGenerator<'a> {
             ),
         );
 
+        // insert mock vk_mptr_mock at position 0
+        constants.insert(1, ("vk_mptr", U256::from(vk_mptr_mock.value().as_usize())));
+
+        // insert mock vk_len at position 1
+
+        let vk_len_mock = attached_vk.len();
+
+        constants.insert(2, ("vk_len", U256::from(vk_len_mock)));
+
         let num_advices_user_challenges_offset = (constants.len() * 0x20)
             + (fixed_comms.len() + permutation_comms.len()) * 0x40
             + (const_lookup_input_expressions.len() * 0x20)
@@ -289,7 +297,7 @@ impl<'a> SolidityGenerator<'a> {
 
         // insert it at position 3 of the constants.
         constants.insert(
-            2,
+            4,
             (
                 "num_advices_user_challenges_offset",
                 U256::from(num_advices_user_challenges_offset),
@@ -313,13 +321,23 @@ impl<'a> SolidityGenerator<'a> {
             })
             .collect_vec();
 
-        Halo2VerifyingKey {
+        let mut vk = Halo2VerifyingKey {
             constants,
             fixed_comms,
             permutation_comms,
             const_lookup_input_expressions,
             num_advices_user_challenges,
-        }
+        };
+        // new generate the real vk_mptr
+        let vk_mptr = Ptr::memory(
+            self.estimate_static_working_memory_size(&attached_vk, Ptr::calldata(0x84)),
+        );
+        // replace the mock vk_mptr with the real vk_mptr
+        vk.constants[1] = ("vk_mptr", U256::from(vk_mptr.value().as_usize()));
+        // replace the mock vk_len with the real vk_len
+        let vk_len = vk.len();
+        vk.constants[2] = ("vk_len", U256::from(vk_len));
+        vk
     }
 
     fn generate_verifier(&self) -> Halo2Verifier {
@@ -353,7 +371,7 @@ impl<'a> SolidityGenerator<'a> {
         .collect();
 
         let pcs_computations = match self.scheme {
-            Bdfg21 => bdfg21_computations(&self.meta, &data),
+            Bdfg21 => bdfg21_computations(&self.meta, &data, false),
             Gwc19 => unimplemented!(),
         };
 
@@ -381,7 +399,6 @@ impl<'a> SolidityGenerator<'a> {
         let proof_cptr = Ptr::calldata(0x84);
 
         let vk = self.generate_vk(true);
-        let vk_len = vk.len();
         let vk_m = self.estimate_static_working_memory_size(&vk, proof_cptr);
         let vk_mptr = Ptr::memory(vk_m);
         // if separate then create a hashmap of vk.const_lookup_input_expressions values to its vk memory location.
@@ -423,14 +440,12 @@ impl<'a> SolidityGenerator<'a> {
         .collect();
 
         let pcs_computations = match self.scheme {
-            Bdfg21 => bdfg21_computations(&self.meta, &data),
+            Bdfg21 => bdfg21_computations(&self.meta, &data, true),
             Gwc19 => unimplemented!(),
         };
 
         Halo2VerifierReusable {
             scheme: self.scheme,
-            vk_len,
-            vk_mptr,
             num_neg_lagranges: self.meta.rotation_last.unsigned_abs() as usize,
             num_evals: self.meta.num_evals,
             challenge_mptr: data.challenge_mptr,

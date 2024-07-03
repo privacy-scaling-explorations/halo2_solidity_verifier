@@ -6,33 +6,6 @@ contract Halo2Verifier {
     uint256 internal constant    PROOF_LEN_CPTR = 0x64;
     uint256 internal constant        PROOF_CPTR = 0x84;
 
-    uint256 internal constant                VK_MPTR = {{ vk_mptr }};
-    uint256 internal constant         VK_DIGEST_MPTR = {{ vk_mptr }};
-    uint256 internal constant     NUM_INSTANCES_MPTR = {{ vk_mptr + 1 }};
-    uint256 internal constant NUM_ADVICES_USER_CHALLENGES_OFFSET = {{ vk_mptr + 2 }};
-    uint256 internal constant LAST_QUOTIENT_X_CPTR = {{ vk_mptr + 3 }};
-    uint256 internal constant FIRST_QUOTIENT_X_CPTR = {{ vk_mptr + 4 }};
-    uint256 internal constant                 INSTANCE_CPTR = {{ vk_mptr + 5 }};
-    uint256 internal constant                 K_MPTR = {{ vk_mptr + 6 }};
-    uint256 internal constant             N_INV_MPTR = {{ vk_mptr + 7 }};
-    uint256 internal constant             OMEGA_MPTR = {{ vk_mptr + 8 }};
-    uint256 internal constant         OMEGA_INV_MPTR = {{ vk_mptr + 9 }};
-    uint256 internal constant    OMEGA_INV_TO_L_MPTR = {{ vk_mptr + 10 }};
-    uint256 internal constant   HAS_ACCUMULATOR_MPTR = {{ vk_mptr + 11 }};
-    uint256 internal constant        ACC_OFFSET_MPTR = {{ vk_mptr + 12 }};
-    uint256 internal constant     NUM_ACC_LIMBS_MPTR = {{ vk_mptr + 13 }};
-    uint256 internal constant NUM_ACC_LIMB_BITS_MPTR = {{ vk_mptr + 14 }};
-    uint256 internal constant              G1_X_MPTR = {{ vk_mptr + 15 }};
-    uint256 internal constant              G1_Y_MPTR = {{ vk_mptr + 16 }};
-    uint256 internal constant            G2_X_1_MPTR = {{ vk_mptr + 17 }};
-    uint256 internal constant            G2_X_2_MPTR = {{ vk_mptr + 18 }};
-    uint256 internal constant            G2_Y_1_MPTR = {{ vk_mptr + 19 }};
-    uint256 internal constant            G2_Y_2_MPTR = {{ vk_mptr + 20 }};
-    uint256 internal constant      NEG_S_G2_X_1_MPTR = {{ vk_mptr + 21 }};
-    uint256 internal constant      NEG_S_G2_X_2_MPTR = {{ vk_mptr + 22 }};
-    uint256 internal constant      NEG_S_G2_Y_1_MPTR = {{ vk_mptr + 23 }};
-    uint256 internal constant      NEG_S_G2_Y_2_MPTR = {{ vk_mptr + 24 }};
-
     uint256 internal constant CHALLENGE_MPTR = {{ challenge_mptr }};
 
     uint256 internal constant THETA_MPTR = {{ theta_mptr }};
@@ -193,19 +166,19 @@ contract Halo2Verifier {
 
             // Perform pairing check.
             // Return updated (success).
-            function ec_pairing(success, lhs_x, lhs_y, rhs_x, rhs_y) -> ret {
+            function ec_pairing(success, vk_mptr, lhs_x, lhs_y, rhs_x, rhs_y) -> ret {
                 mstore(0x00, lhs_x)
                 mstore(0x20, lhs_y)
-                mstore(0x40, mload(G2_X_1_MPTR))
-                mstore(0x60, mload(G2_X_2_MPTR))
-                mstore(0x80, mload(G2_Y_1_MPTR))
-                mstore(0xa0, mload(G2_Y_2_MPTR))
+                mstore(0x40, mload(add(vk_mptr, 0x0260)))
+                mstore(0x60, mload(add(vk_mptr, 0x0280)))
+                mstore(0x80, mload(add(vk_mptr, 0x02a0)))
+                mstore(0xa0, mload(add(vk_mptr, 0x02c0)))
                 mstore(0xc0, rhs_x)
                 mstore(0xe0, rhs_y)
-                mstore(0x100, mload(NEG_S_G2_X_1_MPTR))
-                mstore(0x120, mload(NEG_S_G2_X_2_MPTR))
-                mstore(0x140, mload(NEG_S_G2_Y_1_MPTR))
-                mstore(0x160, mload(NEG_S_G2_Y_2_MPTR))
+                mstore(0x100, mload(add(vk_mptr, 0x02e0)))
+                mstore(0x120, mload(add(vk_mptr, 0x0300)))
+                mstore(0x140, mload(add(vk_mptr, 0x0320)))
+                mstore(0x160, mload(add(vk_mptr, 0x0340)))
                 ret := and(success, staticcall(gas(), 0x08, 0x00, 0x180, 0x00, 0x20))
                 ret := and(ret, mload(0x00))
             }
@@ -216,22 +189,24 @@ contract Halo2Verifier {
 
             // Initialize success as true
             let success := true
-
+            // Initialize vk_mptr as 0x0
+            let vk_mptr := 0x0
             {
+                // Load in the vk_digest, vk_mptr and vk_len
+                extcodecopy(vk, 0x0, 0x00, 0x60)
+                vk_mptr := mload(0x20)
+                let vk_len := mload(0x40)
                 // Copy full vk into memory
-                extcodecopy(vk, VK_MPTR, 0x00, {{ vk_len|hex() }})
+                extcodecopy(vk, vk_mptr, 0x00, vk_len)
 
-                let instance_cptr := mload(INSTANCE_CPTR)
+                let instance_cptr := mload(add(vk_mptr, 0xe0))
 
                 // Check valid length of proof
                 success := and(success, eq(sub(instance_cptr, 0xa4), calldataload(PROOF_LEN_CPTR)))
 
                 // Check valid length of instances
-                let num_instances := mload(NUM_INSTANCES_MPTR)
+                let num_instances := mload(add(vk_mptr,0x60))
                 success := and(success, eq(num_instances, calldataload(sub(instance_cptr,0x20))))
-
-                // Absorb vk diegst
-                mstore(0x00, mload(VK_DIGEST_MPTR))
 
                 // Read instances and witness commitments and generate challenges
                 let hash_mptr := 0x20
@@ -249,7 +224,7 @@ contract Halo2Verifier {
 
                 let proof_cptr := PROOF_CPTR
                 let challenge_mptr := CHALLENGE_MPTR
-                let num_advices_ptr := add(VK_MPTR, mload(NUM_ADVICES_USER_CHALLENGES_OFFSET))
+                let num_advices_ptr := add(vk_mptr, mload(add(vk_mptr, 0x80)))
                 let num_advices_len := mload(num_advices_ptr)
                 let advices_ptr := add(num_advices_ptr, 0x20) // start of advices
                 let challenges_ptr := add(advices_ptr, 0x20) // start of challenges
@@ -302,14 +277,14 @@ contract Halo2Verifier {
                 {%- endmatch %}
 
                 // Copy full vk into memory
-                extcodecopy(vk, VK_MPTR, 0x00, {{ vk_len|hex() }})
+                extcodecopy(vk, vk_mptr, 0x00, vk_len)
 
                 // Read accumulator from instances
-                if mload(HAS_ACCUMULATOR_MPTR) {
-                    let num_limbs := mload(NUM_ACC_LIMBS_MPTR)
-                    let num_limb_bits := mload(NUM_ACC_LIMB_BITS_MPTR)
+                if mload(add(vk_mptr, 0x01a0)) {
+                    let num_limbs := mload(add(vk_mptr, 0x01e0))
+                    let num_limb_bits := mload(add(vk_mptr, 0x0200))
 
-                    let cptr := add(mload(INSTANCE_CPTR), mul(mload(ACC_OFFSET_MPTR), 0x20))
+                    let cptr := add(mload(add(vk_mptr, 0xe0)), mul(mload(add(vk_mptr, 0x01c0)), 0x20))
                     let lhs_y_off := mul(num_limbs, 0x20)
                     let rhs_x_off := mul(lhs_y_off, 2)
                     let rhs_y_off := mul(lhs_y_off, 3)
@@ -353,7 +328,7 @@ contract Halo2Verifier {
 
             // Compute lagrange evaluations and instance evaluation
             {
-                let k := mload(K_MPTR)
+                let k := mload(add(vk_mptr, 0x100))
                 let x := mload(X_MPTR)
                 let x_n := x
                 for
@@ -364,15 +339,16 @@ contract Halo2Verifier {
                     x_n := mulmod(x_n, x_n, r)
                 }
 
-                let omega := mload(OMEGA_MPTR)
+                let omega := mload(add(vk_mptr, 0x140))
 
                 let mptr := X_N_MPTR
-                let mptr_end := add(mptr, mul(0x20, add(mload(NUM_INSTANCES_MPTR), {{ num_neg_lagranges }})))
-                if iszero(mload(NUM_INSTANCES_MPTR)) {
+                let num_instances := mload(add(vk_mptr,0x60))
+                let mptr_end := add(mptr, mul(0x20, add(num_instances, {{ num_neg_lagranges }})))
+                if iszero(num_instances) {
                     mptr_end := add(mptr_end, 0x20)
                 }
                 for
-                    { let pow_of_omega := mload(OMEGA_INV_TO_L_MPTR) }
+                    { let pow_of_omega := mload(add(vk_mptr, 0x180)) }
                     lt(mptr, mptr_end)
                     { mptr := add(mptr, 0x20) }
                 {
@@ -384,9 +360,9 @@ contract Halo2Verifier {
                 success := batch_invert(success, X_N_MPTR, add(mptr_end, 0x20), r)
 
                 mptr := X_N_MPTR
-                let l_i_common := mulmod(x_n_minus_1, mload(N_INV_MPTR), r)
+                let l_i_common := mulmod(x_n_minus_1, mload(add(vk_mptr, 0x120)), r)
                 for
-                    { let pow_of_omega := mload(OMEGA_INV_TO_L_MPTR) }
+                    { let pow_of_omega := mload(add(vk_mptr, 0x180)) }
                     lt(mptr, mptr_end)
                     { mptr := add(mptr, 0x20) }
                 {
@@ -407,8 +383,8 @@ contract Halo2Verifier {
                 let instance_eval := 0
                 for
                     {
-                        let instance_cptr := mload(INSTANCE_CPTR)
-                        let instance_cptr_end := add(instance_cptr, mul(0x20, mload(NUM_INSTANCES_MPTR)))
+                        let instance_cptr := mload(add(vk_mptr, 0xe0))
+                        let instance_cptr_end := add(instance_cptr, mul(0x20, num_instances))
                     }
                     lt(instance_cptr, instance_cptr_end)
                     {
@@ -454,13 +430,13 @@ contract Halo2Verifier {
 
             // Compute quotient commitment
             {
-                mstore(0x00, calldataload(mload(LAST_QUOTIENT_X_CPTR)))
-                mstore(0x20, calldataload(add(mload(LAST_QUOTIENT_X_CPTR), 0x20)))
+                mstore(0x00, calldataload(mload(add(vk_mptr, 0xa0))))
+                mstore(0x20, calldataload(add(mload(add(vk_mptr, 0xa0)), 0x20)))
                 let x_n := mload(X_N_MPTR)
                 for
                     {
-                        let cptr := sub(mload(LAST_QUOTIENT_X_CPTR), 0x40)
-                        let cptr_end := sub(mload(FIRST_QUOTIENT_X_CPTR), 0x40)
+                        let cptr := sub(mload(add(vk_mptr, 0xa0)), 0x40)
+                        let cptr_end := sub(mload(add(vk_mptr, 0xc0)), 0x40)
                     }
                     lt(cptr_end, cptr)
                     {}
@@ -485,7 +461,7 @@ contract Halo2Verifier {
             }
 
             // Random linear combine with accumulator
-            if mload(HAS_ACCUMULATOR_MPTR) {
+            if mload(add(vk_mptr, 0x01a0)) {
                 mstore(0x00, mload(ACC_LHS_X_MPTR))
                 mstore(0x20, mload(ACC_LHS_Y_MPTR))
                 mstore(0x40, mload(ACC_RHS_X_MPTR))
@@ -514,6 +490,7 @@ contract Halo2Verifier {
             // Perform pairing
             success := ec_pairing(
                 success,
+                vk_mptr,
                 mload(PAIRING_LHS_X_MPTR),
                 mload(PAIRING_LHS_Y_MPTR),
                 mload(PAIRING_RHS_X_MPTR),
