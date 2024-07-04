@@ -7,40 +7,6 @@ contract Halo2Verifier {
     uint256 internal constant        PROOF_CPTR = 0x84;
     uint256 internal constant        Q = 21888242871839275222246405745257275088696311157297823662689037894645226208583;
 
-    // TODO finish offseting the memory pointers in the permutation columns method
-    uint256 internal constant THETA_MPTR = {{ theta_mptr }};
-    uint256 internal constant  BETA_MPTR = {{ theta_mptr + 1 }};
-    uint256 internal constant GAMMA_MPTR = {{ theta_mptr + 2 }};
-    uint256 internal constant     Y_MPTR = {{ theta_mptr + 3 }};
-    uint256 internal constant     X_MPTR = {{ theta_mptr + 4 }};
-    {%- match scheme %}
-    {%- when Bdfg21 %}
-    uint256 internal constant  ZETA_MPTR = {{ theta_mptr + 5 }};
-    uint256 internal constant    NU_MPTR = {{ theta_mptr + 6 }};
-    uint256 internal constant    MU_MPTR = {{ theta_mptr + 7 }};
-    {%- when Gwc19 %}
-    // TODO
-    {%- endmatch %}
-
-    uint256 internal constant       ACC_LHS_X_MPTR = {{ theta_mptr + 8 }};
-    uint256 internal constant       ACC_LHS_Y_MPTR = {{ theta_mptr + 9 }};
-    uint256 internal constant       ACC_RHS_X_MPTR = {{ theta_mptr + 10 }};
-    uint256 internal constant       ACC_RHS_Y_MPTR = {{ theta_mptr + 11 }};
-    uint256 internal constant             X_N_MPTR = {{ theta_mptr + 12 }};
-    uint256 internal constant X_N_MINUS_1_INV_MPTR = {{ theta_mptr + 13 }};
-    uint256 internal constant          L_LAST_MPTR = {{ theta_mptr + 14 }}; // X NEEDED from here on
-    uint256 internal constant         L_BLIND_MPTR = {{ theta_mptr + 15 }};
-    uint256 internal constant             L_0_MPTR = {{ theta_mptr + 16 }};
-    uint256 internal constant   INSTANCE_EVAL_MPTR = {{ theta_mptr + 17 }};
-    uint256 internal constant   QUOTIENT_EVAL_MPTR = {{ theta_mptr + 18 }};
-    uint256 internal constant      QUOTIENT_X_MPTR = {{ theta_mptr + 19 }};
-    uint256 internal constant      QUOTIENT_Y_MPTR = {{ theta_mptr + 20 }};
-    uint256 internal constant          R_EVAL_MPTR = {{ theta_mptr + 21 }};
-    uint256 internal constant   PAIRING_LHS_X_MPTR = {{ theta_mptr + 22 }};
-    uint256 internal constant   PAIRING_LHS_Y_MPTR = {{ theta_mptr + 23 }};
-    uint256 internal constant   PAIRING_RHS_X_MPTR = {{ theta_mptr + 24 }};
-    uint256 internal constant   PAIRING_RHS_Y_MPTR = {{ theta_mptr + 25 }};
-
     function verifyProof(
         address vk,
         bytes calldata proof,
@@ -404,10 +370,10 @@ contract Halo2Verifier {
 
                 mstore(x_n_mptr, x_n)
                 mstore(add(theta_mptr, 0x1a0), x_n_minus_1_inv)
-                mstore(L_LAST_MPTR, l_last)
-                mstore(L_BLIND_MPTR, l_blind)
-                mstore(L_0_MPTR, l_0)
-                mstore(INSTANCE_EVAL_MPTR, instance_eval)
+                mstore(add(theta_mptr, 0x1c0), l_last)
+                mstore(add(theta_mptr, 0x1e0), l_blind)
+                mstore(add(theta_mptr, 0x200), l_0)
+                mstore(add(theta_mptr, 0x220), instance_eval)
             }
 
             // Compute quotient evavluation
@@ -428,7 +394,7 @@ contract Halo2Verifier {
                 pop(delta)
 
                 let quotient_eval := mulmod(quotient_eval_numer, mload(add(theta_mptr, 0x1a0)), r)
-                mstore(QUOTIENT_EVAL_MPTR, quotient_eval)
+                mstore(add(theta_mptr, 0x240), quotient_eval)
             }
 
             // Compute quotient commitment
@@ -448,8 +414,8 @@ contract Halo2Verifier {
                     success := ec_add_acc(success, calldataload(cptr), calldataload(add(cptr, 0x20)))
                     cptr := sub(cptr, 0x40)
                 }
-                mstore(QUOTIENT_X_MPTR, mload(0x00))
-                mstore(QUOTIENT_Y_MPTR, mload(0x20))
+                mstore(add(theta_mptr, 0x260), mload(0x00))
+                mstore(add(theta_mptr, 0x280), mload(0x20))
             }
 
             // Compute pairing lhs and rhs
@@ -469,35 +435,35 @@ contract Halo2Verifier {
                 mstore(0x20, mload(add(theta_mptr, 0x120)))
                 mstore(0x40, mload(add(theta_mptr, 0x140)))
                 mstore(0x60, mload(add(theta_mptr, 0x160)))
-                mstore(0x80, mload(PAIRING_LHS_X_MPTR))
-                mstore(0xa0, mload(PAIRING_LHS_Y_MPTR))
-                mstore(0xc0, mload(PAIRING_RHS_X_MPTR))
-                mstore(0xe0, mload(PAIRING_RHS_Y_MPTR))
+                mstore(0x80, mload(add(theta_mptr, 0x2c0)))
+                mstore(0xa0, mload(add(theta_mptr, 0x2e0)))
+                mstore(0xc0, mload(add(theta_mptr, 0x300)))
+                mstore(0xe0, mload(add(theta_mptr, 0x320)))
                 let challenge := mod(keccak256(0x00, 0x100), r)
 
                 // [pairing_lhs] += challenge * [acc_lhs]
                 success := ec_mul_acc(success, challenge)
-                success := ec_add_acc(success, mload(PAIRING_LHS_X_MPTR), mload(PAIRING_LHS_Y_MPTR))
-                mstore(PAIRING_LHS_X_MPTR, mload(0x00))
-                mstore(PAIRING_LHS_Y_MPTR, mload(0x20))
+                success := ec_add_acc(success, mload(add(theta_mptr, 0x2c0)), mload(add(theta_mptr, 0x2e0)))
+                mstore(add(theta_mptr, 0x2c0), mload(0x00))
+                mstore(add(theta_mptr, 0x2e0), mload(0x20))
 
                 // [pairing_rhs] += challenge * [acc_rhs]
-                mstore(0x00, mload(ACC_RHS_X_MPTR))
-                mstore(0x20, mload(ACC_RHS_Y_MPTR))
+                mstore(0x00, mload(add(theta_mptr, 0x140)))
+                mstore(0x20, mload(add(theta_mptr, 0x160)))
                 success := ec_mul_acc(success, challenge)
-                success := ec_add_acc(success, mload(PAIRING_RHS_X_MPTR), mload(PAIRING_RHS_Y_MPTR))
-                mstore(PAIRING_RHS_X_MPTR, mload(0x00))
-                mstore(PAIRING_RHS_Y_MPTR, mload(0x20))
+                success := ec_add_acc(success, mload(add(theta_mptr, 0x300)), mload(add(theta_mptr, 0x320)))
+                mstore(add(theta_mptr, 0x300), mload(0x00))
+                mstore(add(theta_mptr, 0x320), mload(0x20))
             }
 
-            // Perform pairing
+            // // Perform pairing
             success := ec_pairing(
                 success,
                 vk_mptr,
-                mload(PAIRING_LHS_X_MPTR),
-                mload(PAIRING_LHS_Y_MPTR),
-                mload(PAIRING_RHS_X_MPTR),
-                mload(PAIRING_RHS_Y_MPTR)
+                mload(add(theta_mptr, 0x2c0)),
+                mload(add(theta_mptr, 0x2e0)),
+                mload(add(theta_mptr, 0x300)),
+                mload(add(theta_mptr, 0x320))
             )
  
 

@@ -394,6 +394,7 @@ impl Data {
         vk: &Halo2VerifyingKey,
         vk_mptr: Ptr,
         proof_cptr: Ptr,
+        separate: bool,
     ) -> Self {
         let fixed_comm_mptr = vk_mptr + vk.constants.len();
         let permutation_comm_mptr = fixed_comm_mptr + 2 * vk.fixed_comms.len();
@@ -418,6 +419,26 @@ impl Data {
         let permutation_z_eval_cptr = permutation_eval_cptr + meta.num_permutations();
         let lookup_eval_cptr = permutation_z_eval_cptr + 3 * meta.num_permutation_zs - 1;
         let w_cptr = lookup_eval_cptr + 3 * meta.num_lookups();
+        let l_0 = if separate {
+            "add(theta_mptr, 0x220)"
+        } else {
+            "INSTANCE_EVAL_MPTR"
+        };
+        let quotient_eval = if separate {
+            "add(theta_mptr, 0x240)"
+        } else {
+            "QUOTIENT_EVAL_MPTR"
+        };
+        let quotient_x = if separate {
+            "add(theta_mptr, 0x260)"
+        } else {
+            "QUOTIENT_X_MPTR"
+        };
+        let quotient_y = if separate {
+            "add(theta_mptr, 0x280)"
+        } else {
+            "QUOTIENT_Y_MPTR"
+        };
 
         let fixed_comms = EcPoint::range(fixed_comm_mptr)
             .take(meta.num_fixeds)
@@ -443,10 +464,7 @@ impl Data {
             .take(meta.num_lookup_phis)
             .collect();
         let random_comm = random_comm_start.into();
-        let computed_quotient_comm = EcPoint::new(
-            Ptr::memory("QUOTIENT_X_MPTR"),
-            Ptr::memory("QUOTIENT_Y_MPTR"),
-        );
+        let computed_quotient_comm = EcPoint::new(Ptr::memory(quotient_x), Ptr::memory(quotient_y));
 
         let challenges = meta
             .challenge_indices
@@ -454,7 +472,7 @@ impl Data {
             .map(|idx| challenge_mptr + *idx)
             .map_into()
             .collect_vec();
-        let instance_eval = Ptr::memory("INSTANCE_EVAL_MPTR").into();
+        let instance_eval = Ptr::memory(l_0).into();
         let advice_evals = izip!(
             meta.advice_queries.iter().cloned(),
             Word::range(advice_eval_cptr)
@@ -479,7 +497,7 @@ impl Data {
             .take(3 * meta.num_lookup_phis)
             .tuples()
             .collect_vec();
-        let computed_quotient_eval = Ptr::memory("QUOTIENT_EVAL_MPTR").into();
+        let computed_quotient_eval = Ptr::memory(quotient_eval).into();
 
         Self {
             challenge_mptr,
@@ -517,6 +535,7 @@ impl Data {
         vk: &Halo2VerifyingKey,
         vk_mptr: Ptr,
         proof_cptr: Ptr,
+        separate: bool,
     ) -> Self {
         let fixed_comm_mptr = vk_mptr + vk.constants.len();
         let permutation_comm_mptr = fixed_comm_mptr + 2 * vk.fixed_comms.len();
@@ -924,4 +943,49 @@ where
     U256: UintTryFrom<T>,
 {
     U256::from(value).to_be_bytes()
+}
+
+pub(crate) fn get_memory_ptr(base_ptr: &str, offset: usize, separate: &bool) -> String {
+    if *separate {
+        if offset != 0 {
+            let hex_offset = format!("{:X}", offset * 32);
+            format!("add({}, 0x{})", base_ptr, hex_offset)
+        } else {
+            base_ptr.to_string()
+        }
+    } else {
+        match (offset, base_ptr) {
+            (10, "vk_mptr") => "OMEGA_MPTR".to_string(),
+            (11, "vk_mptr") => "OMEGA_INV_MPTR".to_string(),
+            (17, "vk_mptr") => "G1_X_MPTR".to_string(),
+            (18, "vk_mptr") => "G1_Y_MPTR".to_string(),
+            (0, "theta_mptr") => "THETA_MPTR".to_string(),
+            (1, "theta_mptr") => "BETA_MPTR".to_string(),
+            (2, "theta_mptr") => "GAMMA_MPTR".to_string(),
+            (3, "theta_mptr") => "Y_MPTR".to_string(),
+            (4, "theta_mptr") => "X_MPTR".to_string(),
+            (5, "theta_mptr") => "ZETA_MPTR".to_string(),
+            (6, "theta_mptr") => "NU_MPTR".to_string(),
+            (7, "theta_mptr") => "MU_MPTR".to_string(),
+            (8, "theta_mptr") => "ACC_LHS_X_MPTR".to_string(),
+            (9, "theta_mptr") => "ACC_LHS_Y_MPTR".to_string(),
+            (10, "theta_mptr") => "ACC_RHS_X_MPTR".to_string(),
+            (11, "theta_mptr") => "ACC_RHS_Y_MPTR".to_string(),
+            (12, "theta_mptr") => "X_N_MPTR".to_string(),
+            (13, "theta_mptr") => "X_N_MINUS_1_INV_MPTR".to_string(),
+            (14, "theta_mptr") => "L_LAST_MPTR".to_string(),
+            (15, "theta_mptr") => "L_BLIND_MPTR".to_string(),
+            (16, "theta_mptr") => "L_0_MPTR".to_string(),
+            (17, "theta_mptr") => "INSTANCE_EVAL_MPTR".to_string(),
+            (18, "theta_mptr") => "QUOTIENT_EVAL_MPTR".to_string(),
+            (19, "theta_mptr") => "QUOTIENT_X_MPTR".to_string(),
+            (20, "theta_mptr") => "QUOTIENT_Y_MPTR".to_string(),
+            (21, "theta_mptr") => "R_EVAL_MPTR".to_string(),
+            (22, "theta_mptr") => "PAIRING_LHS_X_MPTR".to_string(),
+            (23, "theta_mptr") => "PAIRING_LHS_Y_MPTR".to_string(),
+            (24, "theta_mptr") => "PAIRING_RHS_X_MPTR".to_string(),
+            (25, "theta_mptr") => "PAIRING_RHS_Y_MPTR".to_string(),
+            _ => panic!("Unknown offset: {}", offset),
+        }
+    }
 }

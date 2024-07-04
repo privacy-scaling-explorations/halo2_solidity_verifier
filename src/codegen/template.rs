@@ -50,8 +50,6 @@ pub(crate) struct Halo2Verifier {
 #[template(path = "Halo2VerifierReusable.sol")]
 pub(crate) struct Halo2VerifierReusable {
     pub(crate) scheme: BatchOpenScheme,
-    pub(crate) challenge_mptr: Ptr,
-    pub(crate) theta_mptr: Ptr,
     pub(crate) num_neg_lagranges: usize,
     pub(crate) num_evals: usize,
     pub(crate) quotient_eval_numer_computations: Vec<Vec<String>>,

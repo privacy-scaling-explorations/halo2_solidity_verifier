@@ -13,6 +13,8 @@ use regex::Regex;
 use ruint::aliases::U256;
 use std::{cell::RefCell, cmp::Ordering, collections::HashMap, iter};
 
+use super::util::get_memory_ptr;
+
 #[derive(Debug)]
 pub(crate) struct Evaluator<'a, F: PrimeField> {
     cs: &'a ConstraintSystem<F>,
@@ -49,13 +51,20 @@ where
             .collect()
     }
 
-    pub fn permutation_computations(&self) -> Vec<(Vec<String>, String)> {
+    pub fn permutation_computations(&self, separate: bool) -> Vec<(Vec<String>, String)> {
         let Self { meta, data, .. } = self;
         let last_chunk_idx = meta.num_permutation_zs - 1;
+        let theta_mptr = "theta_mptr";
+        let beta = get_memory_ptr(theta_mptr, 1, &separate);
+        let gamma = get_memory_ptr(theta_mptr, 2, &separate);
+        let x_mptr = get_memory_ptr(theta_mptr, 4, &separate);
+        let l_last = get_memory_ptr(theta_mptr, 14, &separate);
+        let l_blind = get_memory_ptr(theta_mptr, 15, &separate);
+        let l_0 = get_memory_ptr(theta_mptr, 16, &separate);
         chain![
             data.permutation_z_evals.first().map(|(z, _, _)| {
                 vec![
-                    format!("let l_0 := mload(L_0_MPTR)"),
+                    format!("let l_0 := mload({l_0})"),
                     format!("let eval := addmod(l_0, sub(r, mulmod(l_0, {z}, r)), r)"),
                 ]
             }),
@@ -63,13 +72,13 @@ where
                 let item = "addmod(mulmod(perm_z_last, perm_z_last, r), sub(r, perm_z_last), r)";
                 vec![
                     format!("let perm_z_last := {z}"),
-                    format!("let eval := mulmod(mload(L_LAST_MPTR), {item}, r)"),
+                    format!("let eval := mulmod(mload({l_last}), {item}, r)"),
                 ]
             }),
             data.permutation_z_evals.iter().tuple_windows().map(
                 |((_, _, z_i_last), (z_j, _, _))| {
                     let item = format!("addmod({z_j}, sub(r, {z_i_last}), r)");
-                    vec![format!("let eval := mulmod(mload(L_0_MPTR), {item}, r)")]
+                    vec![format!("let eval := mulmod(mload({l_0}), {item}, r)")]
                 }
             ),
             izip!(
@@ -81,8 +90,8 @@ where
                 let last_column_idx = columns.len() - 1;
                 chain![
                     [
-                        format!("let gamma := mload(GAMMA_MPTR)"),
-                        format!("let beta := mload(BETA_MPTR)"),
+                        format!("let gamma := mload({})", gamma),
+                        format!("let beta := mload({})", beta),
                         format!("let lhs := {}", evals.1),
                         format!("let rhs := {}", evals.0),
                     ],
@@ -95,7 +104,7 @@ where
                         )]
                     }),
                     (chunk_idx == 0)
-                        .then(|| "mstore(0x00, mulmod(beta, mload(X_MPTR), r))".to_string()),
+                        .then(|| format!("mstore(0x00, mulmod(beta, mload({}), r))", x_mptr)),
                     columns.iter().enumerate().flat_map(|(idx, column)| {
                         let eval = self.eval(*column.column_type(), column.index(), 0);
                         let item = format!("addmod(addmod({eval}, mload(0x00), r), gamma, r)");
@@ -106,7 +115,7 @@ where
                         ]
                     }),
                     {
-                        let item = format!("addmod(mload(L_LAST_MPTR), mload(L_BLIND_MPTR), r)");
+                        let item = format!("addmod(mload({l_last}), mload({l_blind}), r)");
                         let item = format!("sub(r, mulmod(left_sub_right, {item}, r))");
                         [
                             format!("let left_sub_right := addmod(lhs, sub(r, rhs), r)"),
@@ -188,21 +197,23 @@ where
                 let (phi, phi_next, m) = evals;
                 // if separate then use the theta_mptr on set on the stack
                 // otherwise use the solidity constant
-                let theta = if separate { "theta_mptr" } else { "THETA_MPTR" };
+                let theta_mptr = "theta_mptr";
+                let theta = get_memory_ptr(theta_mptr, 0, &separate);
                 // For all the the other pointers offset from the theta_mptr perfrom relavant add operation
-                let beta = if separate {
-                    "add(theta_mptr, 0x20)"
-                } else {
-                    "BETA_MPTR"
-                };
+                let beta = get_memory_ptr(theta_mptr, 1, &separate);
+                let l_last = get_memory_ptr(theta_mptr, 14, &separate);
+
+                let l_blind = get_memory_ptr(theta_mptr, 15, &separate);
+
+                let l_0 = get_memory_ptr(theta_mptr, 16, &separate);
                 // print line the input tables
                 [
                     vec![
-                        format!("let l_0 := mload(L_0_MPTR)"),
+                        format!("let l_0 := mload({l_0})"),
                         format!("let eval := mulmod(l_0, {phi}, r)"),
                     ],
                     vec![
-                        format!("let l_last := mload(L_LAST_MPTR)"),
+                        format!("let l_last := mload({l_last})"),
                         format!("let eval := mulmod(l_last, {phi}, r)"),
                     ],
                     chain![
@@ -299,7 +310,8 @@ where
                             ],
                         ]),
                         {
-                            let l_inactive = "addmod(mload(L_BLIND_MPTR), mload(L_LAST_MPTR), r)";
+                            let l_inactive =
+                                format!("addmod(mload({l_blind}), mload({l_last}), r)");
                             let l_active = format!("addmod(1, sub(r, {l_inactive}), r)");
                             [format!(
                                 "let eval := mulmod({l_active}, addmod(lhs, sub(r, rhs), r), r)"

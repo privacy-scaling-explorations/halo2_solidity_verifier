@@ -198,8 +198,7 @@ impl<'a> SolidityGenerator<'a> {
             let g2 = g2_to_u256s(self.params.g2());
             let neg_s_g2 = g2_to_u256s(-self.params.s_g2());
 
-            let challenges_length = self.meta.challenge_indices.len();
-            let challenges_length = U256::from(challenges_length);
+            let challenges_offset = self.meta.challenge_indices.len() * 32;
 
             vec![
                 ("vk_digest", vk_digest),
@@ -223,7 +222,7 @@ impl<'a> SolidityGenerator<'a> {
                 ("neg_s_g2_x_2", neg_s_g2[1]),
                 ("neg_s_g2_y_1", neg_s_g2[2]),
                 ("neg_s_g2_y_2", neg_s_g2[3]),
-                ("challenges_length", challenges_length),
+                ("challenges_offset", U256::from(challenges_offset)),
             ]
         };
         let fixed_comms: Vec<(U256, U256)> = chain![self.vk.fixed_commitments()]
@@ -250,7 +249,13 @@ impl<'a> SolidityGenerator<'a> {
         let vk_mptr_mock = Ptr::memory(
             self.estimate_static_working_memory_size(&attached_vk, Ptr::calldata(0x84)),
         );
-        let data = Data::new(&self.meta, &attached_vk, vk_mptr_mock, Ptr::calldata(0x84));
+        let data = Data::new(
+            &self.meta,
+            &attached_vk,
+            vk_mptr_mock,
+            Ptr::calldata(0x84),
+            true,
+        );
 
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
 
@@ -352,12 +357,12 @@ impl<'a> SolidityGenerator<'a> {
         let vk = self.generate_vk(false);
         let vk_m = self.estimate_static_working_memory_size(&vk, proof_cptr);
         let vk_mptr = Ptr::memory(vk_m);
-        let data = Data::new(&self.meta, &vk, vk_mptr, proof_cptr);
+        let data = Data::new(&self.meta, &vk, vk_mptr, proof_cptr, false);
 
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
         let quotient_eval_numer_computations = chain![
             evaluator.gate_computations(),
-            evaluator.permutation_computations(),
+            evaluator.permutation_computations(false),
             evaluator.lookup_computations(None, false).0
         ]
         .enumerate()
@@ -421,12 +426,12 @@ impl<'a> SolidityGenerator<'a> {
                 vk_lookup_const_table.insert(vk.const_lookup_input_expressions[idx], mptr);
             });
 
-        let data = Data::new(&self.meta, &vk, vk_mptr, proof_cptr);
+        let data = Data::new(&self.meta, &vk, vk_mptr, proof_cptr, true);
 
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
         let quotient_eval_numer_computations = chain![
             evaluator.gate_computations(),
-            evaluator.permutation_computations(),
+            evaluator.permutation_computations(true),
             evaluator
                 .lookup_computations(Some(vk_lookup_const_table), true)
                 .0
@@ -454,8 +459,6 @@ impl<'a> SolidityGenerator<'a> {
             scheme: self.scheme,
             num_neg_lagranges: self.meta.rotation_last.unsigned_abs() as usize,
             num_evals: self.meta.num_evals,
-            challenge_mptr: data.challenge_mptr,
-            theta_mptr: data.theta_mptr,
             quotient_eval_numer_computations,
             pcs_computations,
         }
@@ -469,7 +472,7 @@ impl<'a> SolidityGenerator<'a> {
         let pcs_computation = match self.scheme {
             Bdfg21 => {
                 let mock_vk_mptr = Ptr::memory(0x100000);
-                let mock = Data::new(&self.meta, vk, mock_vk_mptr, proof_cptr);
+                let mock = Data::new(&self.meta, vk, mock_vk_mptr, proof_cptr, false);
                 let (superset, sets) = rotation_sets(&queries(&self.meta, &mock));
                 let num_coeffs = sets.iter().map(|set| set.rots().len()).sum::<usize>();
                 2 * (1 + num_coeffs) + 6 + 2 * superset.len() + 1 + 3 * sets.len()
