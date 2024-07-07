@@ -3,6 +3,7 @@
 pragma solidity ^0.8.0;
 
 contract Halo2Verifier {
+    uint256 internal constant    DELTA = 4131629893567559867359510883348571134090853742863529169391034518566172092834;
     uint256 internal constant    PROOF_LEN_CPTR = {{ proof_len_cptr }};
     uint256 internal constant        PROOF_CPTR = {{ proof_cptr }};
     uint256 internal constant NUM_INSTANCE_CPTR = {{ proof_cptr + (proof_len / 32) }};
@@ -440,7 +441,6 @@ contract Halo2Verifier {
             // Compute quotient evavluation
             {
                 let quotient_eval_numer
-                let delta := 4131629893567559867359510883348571134090853742863529169391034518566172092834
                 let y := mload(Y_MPTR)
 
                 {%- for code_block in quotient_eval_numer_computations %}
@@ -452,7 +452,6 @@ contract Halo2Verifier {
                 {%- endfor %}
 
                 pop(y)
-                pop(delta)
 
                 let quotient_eval := mulmod(quotient_eval_numer, mload(X_N_MINUS_1_INV_MPTR), r)
                 mstore(QUOTIENT_EVAL_MPTR, quotient_eval)

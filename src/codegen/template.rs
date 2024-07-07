@@ -14,6 +14,7 @@ pub(crate) struct Halo2VerifyingKey {
     pub(crate) fixed_comms: Vec<(U256, U256)>,
     pub(crate) permutation_comms: Vec<(U256, U256)>,
     pub(crate) const_lookup_input_expressions: Vec<U256>,
+    pub(crate) gate_computations_lens: Vec<U256>,
 }
 
 impl Halo2VerifyingKey {
@@ -22,6 +23,7 @@ impl Halo2VerifyingKey {
             + (self.fixed_comms.len() + self.permutation_comms.len()) * 0x40
             + (self.const_lookup_input_expressions.len() * 0x20)
             + ((self.num_advices_user_challenges.len() * 0x40) + 0x20)
+            + (self.gate_computations_lens.len() * 0x20 + 0x20)
     }
 }
 

@@ -198,32 +198,66 @@ impl<'a> SolidityGenerator<'a> {
             let g2 = g2_to_u256s(self.params.g2());
             let neg_s_g2 = g2_to_u256s(-self.params.s_g2());
 
-            let challenges_offset = self.meta.challenge_indices.len() * 32;
-
-            vec![
-                ("vk_digest", vk_digest),
-                ("num_instances", num_instances),
-                ("k", k),
-                ("n_inv", n_inv),
-                ("omega", omega),
-                ("omega_inv", omega_inv),
-                ("omega_inv_to_l", omega_inv_to_l),
-                ("has_accumulator", has_accumulator),
-                ("acc_offset", acc_offset),
-                ("num_acc_limbs", num_acc_limbs),
-                ("num_acc_limb_bits", num_acc_limb_bits),
-                ("g1_x", g1[0]),
-                ("g1_y", g1[1]),
-                ("g2_x_1", g2[0]),
-                ("g2_x_2", g2[1]),
-                ("g2_y_1", g2[2]),
-                ("g2_y_2", g2[3]),
-                ("neg_s_g2_x_1", neg_s_g2[0]),
-                ("neg_s_g2_x_2", neg_s_g2[1]),
-                ("neg_s_g2_y_1", neg_s_g2[2]),
-                ("neg_s_g2_y_2", neg_s_g2[3]),
-                ("challenges_offset", U256::from(challenges_offset)),
-            ]
+            if separate {
+                vec![
+                    ("vk_digest", vk_digest),
+                    ("vk_mptr", U256::from(0)), // dummy vk_mptr
+                    ("vk_len", U256::from(0)),  // dummy vk_len
+                    ("num_instances", num_instances),
+                    ("num_advices_user_challenges_offset", U256::from(0)), // dummy num_advices_user_challenges_offset
+                    ("last_quotient_x_cptr", U256::from(0)), // dummy last_quotient_x_cptr
+                    ("first_quotient_x_cptr", U256::from(0)), // dummy first_quotient_x_cptr
+                    ("instance_cptr", U256::from(0)),        // dummy instance_cptr
+                    ("k", k),
+                    ("n_inv", n_inv),
+                    ("omega", omega),
+                    ("omega_inv", omega_inv),
+                    ("omega_inv_to_l", omega_inv_to_l),
+                    ("has_accumulator", has_accumulator),
+                    ("acc_offset", acc_offset),
+                    ("num_acc_limbs", num_acc_limbs),
+                    ("num_acc_limb_bits", num_acc_limb_bits),
+                    ("g1_x", g1[0]),
+                    ("g1_y", g1[1]),
+                    ("g2_x_1", g2[0]),
+                    ("g2_x_2", g2[1]),
+                    ("g2_y_1", g2[2]),
+                    ("g2_y_2", g2[3]),
+                    ("neg_s_g2_x_1", neg_s_g2[0]),
+                    ("neg_s_g2_x_2", neg_s_g2[1]),
+                    ("neg_s_g2_y_1", neg_s_g2[2]),
+                    ("neg_s_g2_y_2", neg_s_g2[3]),
+                    (
+                        "challenges_offset",
+                        U256::from(self.meta.challenge_indices.len() * 32),
+                    ),
+                    ("gate_computations_len_offset", U256::from(0)), // dummy gate_computations_len_offset
+                ]
+            } else {
+                vec![
+                    ("vk_digest", vk_digest),
+                    ("num_instances", num_instances),
+                    ("k", k),
+                    ("n_inv", n_inv),
+                    ("omega", omega),
+                    ("omega_inv", omega_inv),
+                    ("omega_inv_to_l", omega_inv_to_l),
+                    ("has_accumulator", has_accumulator),
+                    ("acc_offset", acc_offset),
+                    ("num_acc_limbs", num_acc_limbs),
+                    ("num_acc_limb_bits", num_acc_limb_bits),
+                    ("g1_x", g1[0]),
+                    ("g1_y", g1[1]),
+                    ("g2_x_1", g2[0]),
+                    ("g2_x_2", g2[1]),
+                    ("g2_y_1", g2[2]),
+                    ("g2_y_2", g2[3]),
+                    ("neg_s_g2_x_1", neg_s_g2[0]),
+                    ("neg_s_g2_x_2", neg_s_g2[1]),
+                    ("neg_s_g2_y_1", neg_s_g2[2]),
+                    ("neg_s_g2_y_2", neg_s_g2[3]),
+                ]
+            }
         };
         let fixed_comms: Vec<(U256, U256)> = chain![self.vk.fixed_commitments()]
             .flat_map(g1_to_u256s)
@@ -240,6 +274,7 @@ impl<'a> SolidityGenerator<'a> {
             permutation_comms: permutation_comms.clone(),
             const_lookup_input_expressions: vec![],
             num_advices_user_challenges: vec![],
+            gate_computations_lens: vec![],
         };
 
         if !separate {
@@ -267,51 +302,28 @@ impl<'a> SolidityGenerator<'a> {
 
         let instance_cptr = U256::from((self.meta.proof_len(self.scheme)) + 0xa4);
 
-        // insert it at position 3 of the constants.
-        constants.insert(2, ("instance_cptr", instance_cptr));
+        // set instance_cptr it at position 7 of the constants.
+        constants[7] = ("instance_cptr", instance_cptr);
 
         let first_quotient_x_cptr = data.quotient_comm_cptr;
 
-        constants.insert(
-            2,
-            (
-                "first_quotient_x_cptr",
-                U256::from(first_quotient_x_cptr.value().as_usize()),
-            ),
+        // set first_quotient_x_cptr at position 6 of the constants.
+        constants[6] = (
+            "first_quotient_x_cptr",
+            U256::from(first_quotient_x_cptr.value().as_usize()),
         );
 
         let last_quotient_x_cptr = first_quotient_x_cptr + 2 * (self.meta.num_quotients - 1);
 
-        constants.insert(
-            2,
-            (
-                "last_quotient_x_cptr",
-                U256::from(last_quotient_x_cptr.value().as_usize()),
-            ),
+        // set last_quotient_x_cptr at position 5 of the constants.
+        constants[5] = (
+            "last_quotient_x_cptr",
+            U256::from(last_quotient_x_cptr.value().as_usize()),
         );
 
-        // insert mock vk_mptr_mock at position 0
-        constants.insert(1, ("vk_mptr", U256::from(vk_mptr_mock.value().as_usize())));
-
-        // insert mock vk_len at position 1
-
-        let vk_len_mock = attached_vk.len();
-
-        constants.insert(2, ("vk_len", U256::from(vk_len_mock)));
-
-        let num_advices_user_challenges_offset = (constants.len() * 0x20)
-            + (fixed_comms.len() + permutation_comms.len()) * 0x40
-            + (const_lookup_input_expressions.len() * 0x20)
-            + 0x20;
-
-        // insert it at position 3 of the constants.
-        constants.insert(
-            4,
-            (
-                "num_advices_user_challenges_offset",
-                U256::from(num_advices_user_challenges_offset),
-            ),
-        );
+        let gate_computations_lens: Vec<U256> = chain![evaluator.gate_computations()]
+            .map(|(lines, _)| U256::from(lines.len()))
+            .collect();
 
         let num_advices = self.meta.num_advices();
         let num_user_challenges = self.meta.num_challenges();
@@ -330,12 +342,34 @@ impl<'a> SolidityGenerator<'a> {
             })
             .collect_vec();
 
+        let gate_computations_len_offset = (constants.len() * 0x20)
+            + (fixed_comms.len() + permutation_comms.len()) * 0x40
+            + (const_lookup_input_expressions.len() * 0x20)
+            + ((num_advices_user_challenges.len() * 0x40) + 0x20);
+
+        // set the gate_computations_len_offset at position 28.
+        constants[28] = (
+            "gate_computations_len_offset",
+            U256::from(gate_computations_len_offset),
+        );
+
+        let num_advices_user_challenges_offset = (constants.len() * 0x20)
+            + (fixed_comms.len() + permutation_comms.len()) * 0x40
+            + (const_lookup_input_expressions.len() * 0x20);
+
+        // set the num_advices_user_challenges_offset at position 4
+        constants[4] = (
+            "num_advices_user_challenges_offset",
+            U256::from(num_advices_user_challenges_offset),
+        );
+
         let mut vk = Halo2VerifyingKey {
             constants,
             fixed_comms,
             permutation_comms,
             const_lookup_input_expressions,
             num_advices_user_challenges,
+            gate_computations_lens,
         };
         // new generate the real vk_mptr
         let vk_mptr = Ptr::memory(
@@ -360,7 +394,7 @@ impl<'a> SolidityGenerator<'a> {
         let data = Data::new(&self.meta, &vk, vk_mptr, proof_cptr, false);
 
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
-        let quotient_eval_numer_computations = chain![
+        let quotient_eval_numer_computations: Vec<Vec<String>> = chain![
             evaluator.gate_computations(),
             evaluator.permutation_computations(false),
             evaluator.lookup_computations(None, false).0
@@ -429,7 +463,7 @@ impl<'a> SolidityGenerator<'a> {
         let data = Data::new(&self.meta, &vk, vk_mptr, proof_cptr, true);
 
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
-        let quotient_eval_numer_computations = chain![
+        let quotient_eval_numer_computations: Vec<Vec<String>> = chain![
             evaluator.gate_computations(),
             evaluator.permutation_computations(true),
             evaluator
@@ -449,6 +483,17 @@ impl<'a> SolidityGenerator<'a> {
             lines
         })
         .collect();
+        // iterate through the quotient_eval_numer_computations and determine longest Vec<String> within the Vec<Vec<String>>.
+        // TODO: Use this to estimate static working memory size
+        // let quotient_eval_numer_computations_longest = quotient_eval_numer_computations
+        //     .iter()
+        //     .max_by_key(|x| x.len())
+        //     .unwrap()
+        //     .clone();
+        // println!(
+        //     "longest computation: {:?}",
+        //     quotient_eval_numer_computations_longest.len()
+        // );
 
         let pcs_computations = match self.scheme {
             Bdfg21 => bdfg21_computations(&self.meta, &data, true),
@@ -469,6 +514,7 @@ impl<'a> SolidityGenerator<'a> {
         vk: &Halo2VerifyingKey,
         proof_cptr: Ptr,
     ) -> usize {
+        // TODO add a check for the amount of memory required for the compute quotient evavluation
         let pcs_computation = match self.scheme {
             Bdfg21 => {
                 let mock_vk_mptr = Ptr::memory(0x100000);

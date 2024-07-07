@@ -4,8 +4,11 @@ pragma solidity ^0.8.0;
 
 contract Halo2Verifier {
     uint256 internal constant    PROOF_LEN_CPTR = 0x64;
-    uint256 internal constant        PROOF_CPTR = 0x84;
-    uint256 internal constant        Q = 21888242871839275222246405745257275088696311157297823662689037894645226208583;
+    uint256 internal constant    PROOF_CPTR = 0x84;
+    uint256 internal constant    Q = 21888242871839275222246405745257275088696311157297823662689037894645226208583;
+    uint256 internal constant    DELTA = 4131629893567559867359510883348571134090853742863529169391034518566172092834;
+
+
 
     function verifyProof(
         address vk,
@@ -379,7 +382,6 @@ contract Halo2Verifier {
             // Compute quotient evavluation
             {
                 let quotient_eval_numer
-                let delta := 4131629893567559867359510883348571134090853742863529169391034518566172092834
                 let y := mload(add(theta_mptr, 0x60))
 
                 {%- for code_block in quotient_eval_numer_computations %}
@@ -391,11 +393,80 @@ contract Halo2Verifier {
                 {%- endfor %}
 
                 pop(y)
-                pop(delta)
 
                 let quotient_eval := mulmod(quotient_eval_numer, mload(add(theta_mptr, 0x1a0)), r)
                 mstore(add(theta_mptr, 0x240), quotient_eval)
             }
+
+            // // Compute quotient evavluation
+            // // TODO:
+            // // [X] Gate computations
+            // // [ ] Permutation computations
+            // // [ ] Lookup computations
+            // {
+            //     let quotient_eval_numer
+            //     let y := mload(add(theta_mptr, 0x60))
+            //     let code_blocks_len := mload(add(vk_mptr, 0x380)) // Remember this length represented in bytes
+            //     let code_blocks_len_offset := mload(add(vk_mptr, CODE_BLOCKS_LENS_OFFSET)) // TODO fill in the correct offset
+            //     let expressions_ptr := add(vk_mptr, EXPRESSIONS_OFFSET) // TODO fill in the correct offset
+            //     let expression := 0x0 // Initialize this to 0. Will set it later in the loop
+            //     let experssion_words_counter := 0
+            //     let free_static_memory_ptr := 0x20 // Initialize at 0x20 b/c 0x00 to store vars that need to persist across certain code blocks
+            //     let constants_ptr := add(vk_mptr, CONSTANTS_OFFSET) // TODO fill in the correct offset
+            //     // Load in the total number of code blocks from the vk constants, right after the number challenges
+            //     for { let code_block := 0 } lt(code_block, code_blocks_len) { code_block := add(code_block, 0x20) } {
+            //         // Shift the code_len by the free_static_memory_ptr
+            //         let code_len := add(mload(add(code_blocks_len_offset, code_block)), free_static_memory_ptr)
+            //         // loop through code len
+            //         for { let i := free_static_memory_ptr } lt(i, code_len) { i := add(i, 0x20) } {
+            //             /// @dev Note we can optimize the amount of space the expressions take up by packing 32/5 == 6 expressions into a single word
+            //             expression := mload(add(expressions_ptr, experssion_words_counter))
+            //             experssion_words_counter := add(experssion_words_counter, 0x20)
+            //             // Load in the least significant byte located of the `expression` word to get the operation type
+            //             let byte := and(expression, 0xFF)
+                        
+            //             // Determine which operation to peform and then store the result in the next available memory slot.
+
+            //             // 0x00 => Advice/Fixed expression
+            //             if (eq(byte, 0x00)) {
+            //                 // Load the calldata ptr from the expression, which come from the 2nd and 3rd least significant bytes.
+            //                 mstore(i,calldataload(and(shr(8, expressions), 0xFFFF)))
+            //             } 
+            //             // 0x01 => Negated expression
+            //             else if (eq(byte, 0x01)) {
+            //                 // Load the memory ptr from the expression, which come from the 2nd and 3rd least significant bytes
+            //                 mstore(i,sub(r, mload(and(shr(8, expressions), 0xFFFF))))
+            //             }
+            //             // 0x02 => Sum expression
+            //             else if (eq(byte, 0x02)) {
+            //                 // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
+            //                 // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
+            //                 mstore(i,addmod(mload(and(shr(24, expressions), 0xFFFF)),mload(and(shr(8, expressions), 0xFFFF)),r))
+            //             }
+            //             // 0x03 => Product/scalar expression
+            //             else if (eq(byte, 0x03)) {
+            //                 // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
+            //                 // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
+            //                 mstore(i,mulmod(mload(and(shr(24, expressions), 0xFFFF)),mload(and(shr(8, expressions), 0xFFFF)),r))
+            //             }
+            //         }
+            //         // at the end of each code block we update `quotient_eval_numer`
+            //         if (eq(code_block, 0x00)) {
+            //             // If this is the first code block, we set `quotient_eval_numer` to the last var in the code block
+            //             quotient_eval_numer := mload(code_len)
+            //         } else {
+            //             // Otherwise we add the last var in the code block to `quotient_eval_numer` mod r
+            //             quotient_eval_numer := addmod(quotient_eval_numer, mload(code_len), r)
+            //         }
+            //     }
+
+            //     pop(y)
+
+            //     let quotient_eval := mulmod(quotient_eval_numer, mload(add(theta_mptr, 0x1a0)), r)
+            //     mstore(add(theta_mptr, 0x240), quotient_eval)
+            //     // Check that the quotient evaluation is correct
+            //     success := and(success, eq(quotient_eval, mload(add(theta_mptr, 0x240)))
+            // }
 
             // Compute quotient commitment
             {

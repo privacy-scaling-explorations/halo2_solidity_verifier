@@ -53,6 +53,7 @@ fn run_render<C: halo2::TestCircuit<Fr>>() {
     let generator = SolidityGenerator::new(&params, &vk, Bdfg21, instances.len())
         .set_acc_encoding(acc_encoding);
     let verifier_solidity = generator.render().unwrap();
+    // println!("Verifier solidity conjoined: {verifier_solidity}");
     let verifier_creation_code = compile_solidity(verifier_solidity);
     let verifier_creation_code_size = verifier_creation_code.len();
 
@@ -96,6 +97,10 @@ fn run_render_separately<C: halo2::TestCircuit<Fr>>() {
 
         let (verifier_solidity, vk_solidity) = generator.render_separately().unwrap();
         assert_eq!(deployed_verifier_solidity, verifier_solidity);
+        // print verifier_solidity
+        // println!("Verifier solidity: {verifier_solidity}");
+        // print vk_solidity
+        // println!("VK solidity: {vk_solidity}");
 
         let vk_creation_code = compile_solidity(&vk_solidity);
         let vk_address = evm.create(vk_creation_code);

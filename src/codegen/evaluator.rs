@@ -111,7 +111,7 @@ where
                         chain![
                             [format!("rhs := mulmod(rhs, {item}, r)")],
                             (!(chunk_idx == last_chunk_idx && idx == last_column_idx))
-                                .then(|| "mstore(0x00, mulmod(mload(0x00), delta, r))".to_string()),
+                                .then(|| "mstore(0x00, mulmod(mload(0x00), DELTA, r))".to_string()),
                         ]
                     }),
                     {
@@ -223,6 +223,7 @@ where
                             "let table"
                         ]
                         .map(str::to_string),
+                        // TODO: break this into it's own function on the solidity side of things
                         code_block::<1, false>(chain![
                             table_lines,
                             [format!("table := {table_0}")],
@@ -231,6 +232,8 @@ where
                             )),
                             [format!("table := addmod(table, beta, r)")],
                         ]),
+                        // TODO: break this into it's own function on the solidity side of things,
+                        // calling it within a for loop.
                         izip!(0.., inputs.into_iter()).flat_map(|(idx, (input_lines, inputs))| {
                             let (input_0, rest_inputs) = inputs.split_first().unwrap();
                             let ident = format!("input_{idx}");
@@ -277,6 +280,7 @@ where
                             ]
                         }),
                         [format!("let lhs"), format!("let rhs")],
+                        // TODO: break this into it's own function on the solidity side of things
                         (0..num_inputs).flat_map(|i| {
                             assert_ne!(num_inputs, 0);
                             if num_inputs == 1 {
@@ -297,6 +301,7 @@ where
                                 ])
                             }
                         }),
+                        // TODO: break this into it's own function on the solidity side of things
                         code_block::<1, false>(chain![
                             [format!("let tmp := input_0")],
                             (1..num_inputs)
