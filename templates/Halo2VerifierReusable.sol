@@ -406,15 +406,16 @@ contract Halo2Verifier {
             // {
             //     let quotient_eval_numer
             //     let y := mload(add(theta_mptr, 0x60))
-            //     let code_blocks_len := mload(add(vk_mptr, 0x380)) // Remember this length represented in bytes
-            //     let code_blocks_len_offset := mload(add(vk_mptr, CODE_BLOCKS_LENS_OFFSET)) // TODO fill in the correct offset
+            //     let code_blocks_offset_ptr := add(vk_mptr,(add(vk_mptr, 0x380)))
+            //     let code_blocks_lens_len := mload(code_blocks_offset_ptr) // Remember this length represented in bytes
+            //     let code_blocks_len_offset := mload(add(code_blocks_lens_len, 0x20)) 
             //     let expressions_ptr := add(vk_mptr, EXPRESSIONS_OFFSET) // TODO fill in the correct offset
             //     let expression := 0x0 // Initialize this to 0. Will set it later in the loop
             //     let experssion_words_counter := 0
             //     let free_static_memory_ptr := 0x20 // Initialize at 0x20 b/c 0x00 to store vars that need to persist across certain code blocks
             //     let constants_ptr := add(vk_mptr, CONSTANTS_OFFSET) // TODO fill in the correct offset
             //     // Load in the total number of code blocks from the vk constants, right after the number challenges
-            //     for { let code_block := 0 } lt(code_block, code_blocks_len) { code_block := add(code_block, 0x20) } {
+            //     for { let code_block := 0 } lt(code_block, code_blocks_lens_len) { code_block := add(code_block, 0x20) } {
             //         // Shift the code_len by the free_static_memory_ptr
             //         let code_len := add(mload(add(code_blocks_len_offset, code_block)), free_static_memory_ptr)
             //         // loop through code len

@@ -24,6 +24,20 @@ pub(crate) struct Evaluator<'a, F: PrimeField> {
     var_cache: RefCell<HashMap<String, String>>,
 }
 
+// // Define an enum which catagorizes the operand memory location:
+// // calldata_mptr
+// // constant_mptr
+// // instance_mptr
+// // chllenge_mptr
+// // static_memory_ptr
+// #[derive(Clone, PartialEq, Eq)]
+// pub enum OperandMem {
+//     Calldata,
+//     Constant,
+//     Instance,
+//     Challenge,
+//     StaticMemory,
+// }
 impl<'a, F> Evaluator<'a, F>
 where
     F: PrimeField<Repr = [u8; 0x20]>,
@@ -42,6 +56,34 @@ where
         }
     }
 
+    pub fn expression_consts(&self) -> Vec<F> {
+        let mut inputs_consts: Vec<F> = Vec::new();
+        self.cs
+            .gates()
+            .iter()
+            .flat_map(Gate::polynomials)
+            .for_each(|expression| self.collect_constants(expression, &mut inputs_consts));
+        let evaluate_lookup_consts = |expressions: &Vec<_>, constants: &mut Vec<F>| {
+            expressions.iter().for_each(|expression| {
+                self.collect_constants(expression, constants);
+            });
+        };
+        self.cs.lookups().iter().for_each(|lookup| {
+            let expressions: &Vec<Vec<Expression<F>>> = lookup.input_expressions();
+            expressions.iter().for_each(|arg| {
+                evaluate_lookup_consts(arg, &mut inputs_consts);
+            });
+        });
+        // Remove duplicates while preserving order
+        let mut unique_inputs_consts = Vec::new();
+        for const_value in inputs_consts.clone() {
+            if !unique_inputs_consts.contains(&const_value) {
+                unique_inputs_consts.push(const_value);
+            }
+        }
+        unique_inputs_consts
+    }
+
     pub fn gate_computations(&self) -> Vec<(Vec<String>, String)> {
         self.cs
             .gates()
@@ -50,6 +92,15 @@ where
             .map(|expression| self.evaluate_and_reset(expression))
             .collect()
     }
+
+    // pub fn gate_computation_separate_vk(&self) -> Vec<Vec<U256>> {
+    //     self.cs
+    //         .gates()
+    //         .iter()
+    //         .flat_map(Gate::polynomials)
+    //         .map(|expression| self.evaluate_and_reset(expression))
+    //         .collect()
+    // }
 
     pub fn permutation_computations(&self, separate: bool) -> Vec<(Vec<String>, String)> {
         let Self { meta, data, .. } = self;
@@ -135,7 +186,7 @@ where
         &self,
         vk_lookup_const_table: Option<HashMap<ruint::Uint<256, 4>, super::util::Ptr>>,
         separate: bool,
-    ) -> (Vec<(Vec<String>, String)>, Vec<F>) {
+    ) -> Vec<(Vec<String>, String)> {
         let evaluate = |expressions: &Vec<_>| {
             // println!("expressions: {:?}", expressions);
             let (lines, inputs) = expressions
@@ -150,13 +201,6 @@ where
             (lines, inputs)
         };
 
-        let evaluate_lookup_consts = |expressions: &Vec<_>, constants: &mut Vec<F>| {
-            expressions.iter().for_each(|expression| {
-                self.collect_constants(expression, constants);
-            });
-        };
-
-        let mut inputs_consts: Vec<F> = Vec::new();
         let inputs_tables = self
             .cs
             .lookups()
@@ -164,20 +208,10 @@ where
             .map(|lookup| {
                 let inputs_iter = lookup.input_expressions().iter();
                 let inputs = inputs_iter.clone().map(evaluate).collect_vec();
-                inputs_iter.for_each(|arg| {
-                    evaluate_lookup_consts(arg, &mut inputs_consts);
-                });
                 let table = evaluate(lookup.table_expressions());
                 (inputs, table)
             })
             .collect_vec();
-        // Remove duplicates while preserving order
-        let mut unique_inputs_consts = Vec::new();
-        for const_value in inputs_consts.clone() {
-            if !unique_inputs_consts.contains(&const_value) {
-                unique_inputs_consts.push(const_value);
-            }
-        }
         let lookup_const_table = if let Some(vk_lookup_const_table) = vk_lookup_const_table {
             // map all the keys to u256_string
             let vk_lookup_const_table: HashMap<String, super::util::Ptr> = vk_lookup_const_table
@@ -328,7 +362,7 @@ where
             })
             .zip(iter::repeat("eval".to_string()))
             .collect_vec();
-        (vec, unique_inputs_consts)
+        vec
     }
 
     #[cfg(not(feature = "mv-lookup"))]
@@ -336,7 +370,7 @@ where
         &self,
         _vk_lookup_const_table: Option<HashMap<ruint::Uint<256, 4>, super::util::Ptr>>,
         _separate: bool,
-    ) -> (Vec<(Vec<String>, String)>, Vec<F>) {
+    ) -> Vec<(Vec<String>, String)> {
         let _ = |expressions: &Vec<_>, constants: &mut Vec<F>| {
             expressions.iter().for_each(|expression| {
                 self.collect_constants(expression, constants);
@@ -438,7 +472,7 @@ where
             })
             .zip(iter::repeat("eval".to_string()))
             .collect_vec();
-        (vec, Vec::new())
+        vec
     }
 
     fn eval(&self, column_type: impl Into<Any>, column_index: usize, rotation: i32) -> String {
@@ -459,6 +493,58 @@ where
         self.reset();
         result
     }
+
+    // fn evaluate_and_encode(&self, expression: &Expression<F>) -> Vec<U256> {
+    //     evaluate(
+    //         expression,
+    //         &|constant| {
+    //             let constant = u256_string(constant);
+    //             self.init_encoded_var(constant, OperandMem::Constant)
+    //         },
+    //         &|query| {
+    //             self.init_var(
+    //                 self.eval(Fixed, query.column_index(), query.rotation().0),
+    //                 Some(fixed_eval_var(query)),
+    //             )
+    //         },
+    //         &|query| {
+    //             self.init_var(
+    //                 self.eval(Advice::default(), query.column_index(), query.rotation().0),
+    //                 Some(advice_eval_var(query)),
+    //             )
+    //         },
+    //         &|_| self.init_var(self.data.instance_eval, Some("i_eval".to_string())),
+    //         &|challenge| {
+    //             self.init_var(
+    //                 self.data.challenges[challenge.index()],
+    //                 Some(format!("c_{}", challenge.index())),
+    //             )
+    //         },
+    //         &|(mut acc, var)| {
+    //             let (lines, var) = self.init_var(format!("sub(r, {var})"), None);
+    //             acc.extend(lines);
+    //             (acc, var)
+    //         },
+    //         &|(mut lhs_acc, lhs_var), (rhs_acc, rhs_var)| {
+    //             let (lines, var) = self.init_var(format!("addmod({lhs_var}, {rhs_var}, r)"), None);
+    //             lhs_acc.extend(rhs_acc);
+    //             lhs_acc.extend(lines);
+    //             (lhs_acc, var)
+    //         },
+    //         &|(mut lhs_acc, lhs_var), (rhs_acc, rhs_var)| {
+    //             let (lines, var) = self.init_var(format!("mulmod({lhs_var}, {rhs_var}, r)"), None);
+    //             lhs_acc.extend(rhs_acc);
+    //             lhs_acc.extend(lines);
+    //             (lhs_acc, var)
+    //         },
+    //         &|(mut acc, var), scalar| {
+    //             let scalar = u256_string(scalar);
+    //             let (lines, var) = self.init_var(format!("mulmod({var}, {scalar}, r)"), None);
+    //             acc.extend(lines);
+    //             (acc, var)
+    //         },
+    //     )
+    // }
 
     #[allow(clippy::only_used_in_recursion)]
     #[allow(dead_code)]
@@ -555,6 +641,25 @@ where
         *self.var_counter.borrow_mut() += 1;
         format!("var{count}")
     }
+
+    // Return the encoded word and the static memory pointer
+    // fn init_encoded_var(
+    //     &self,
+    //     value: impl ToString,
+    //     var: OperandMem,
+    //     static_mem_ptr: usize,
+    // ) -> (Vec<U256>, usize) {
+    //     let value = value.to_string();
+    //     if self.var_cache.borrow().contains_key(&value) {
+    //         (vec![], self.var_cache.borrow()[&value].clone())
+    //     } else {
+    //         let var = var.unwrap_or_else(|| self.next_var());
+    //         self.var_cache
+    //             .borrow_mut()
+    //             .insert(value.clone(), var.clone());
+    //         (vec![format!("let {var} := {value}")], var)
+    //     }
+    // }
 }
 
 fn u256_string(value: U256) -> String {

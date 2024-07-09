@@ -272,7 +272,7 @@ impl<'a> SolidityGenerator<'a> {
             constants: constants.clone(),
             fixed_comms: fixed_comms.clone(),
             permutation_comms: permutation_comms.clone(),
-            const_lookup_input_expressions: vec![],
+            const_expressions: vec![],
             num_advices_user_challenges: vec![],
             gate_computations_lens: vec![],
         };
@@ -294,11 +294,11 @@ impl<'a> SolidityGenerator<'a> {
 
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
 
-        let result: (Vec<(Vec<String>, String)>, Vec<bn256::Fr>) =
-            evaluator.lookup_computations(None, false);
-
-        let const_lookup_input_expressions =
-            result.1.into_iter().map(fr_to_u256).collect::<Vec<_>>();
+        let const_expressions = evaluator
+            .expression_consts()
+            .into_iter()
+            .map(fr_to_u256)
+            .collect::<Vec<_>>();
 
         let instance_cptr = U256::from((self.meta.proof_len(self.scheme)) + 0xa4);
 
@@ -342,9 +342,17 @@ impl<'a> SolidityGenerator<'a> {
             })
             .collect_vec();
 
-        let gate_computations_len_offset = (constants.len() * 0x20)
+        let num_advices_user_challenges_offset = (constants.len() * 0x20)
             + (fixed_comms.len() + permutation_comms.len()) * 0x40
-            + (const_lookup_input_expressions.len() * 0x20)
+            + (const_expressions.len() * 0x20);
+
+        // set the num_advices_user_challenges_offset at position 4
+        constants[4] = (
+            "num_advices_user_challenges_offset",
+            U256::from(num_advices_user_challenges_offset),
+        );
+
+        let gate_computations_len_offset = num_advices_user_challenges_offset
             + ((num_advices_user_challenges.len() * 0x40) + 0x20);
 
         // set the gate_computations_len_offset at position 28.
@@ -353,21 +361,13 @@ impl<'a> SolidityGenerator<'a> {
             U256::from(gate_computations_len_offset),
         );
 
-        let num_advices_user_challenges_offset = (constants.len() * 0x20)
-            + (fixed_comms.len() + permutation_comms.len()) * 0x40
-            + (const_lookup_input_expressions.len() * 0x20);
-
-        // set the num_advices_user_challenges_offset at position 4
-        constants[4] = (
-            "num_advices_user_challenges_offset",
-            U256::from(num_advices_user_challenges_offset),
-        );
+        // Collect the gate computations expressions
 
         let mut vk = Halo2VerifyingKey {
             constants,
             fixed_comms,
             permutation_comms,
-            const_lookup_input_expressions,
+            const_expressions,
             num_advices_user_challenges,
             gate_computations_lens,
         };
@@ -397,7 +397,7 @@ impl<'a> SolidityGenerator<'a> {
         let quotient_eval_numer_computations: Vec<Vec<String>> = chain![
             evaluator.gate_computations(),
             evaluator.permutation_computations(false),
-            evaluator.lookup_computations(None, false).0
+            evaluator.lookup_computations(None, false)
         ]
         .enumerate()
         .map(|(idx, (mut lines, var))| {
@@ -444,20 +444,20 @@ impl<'a> SolidityGenerator<'a> {
         let vk = self.generate_vk(true);
         let vk_m = self.estimate_static_working_memory_size(&vk, proof_cptr);
         let vk_mptr = Ptr::memory(vk_m);
-        // if separate then create a hashmap of vk.const_lookup_input_expressions values to its vk memory location.
+        // if separate then create a hashmap of vk.const_expressions values to its vk memory location.
         let mut vk_lookup_const_table: HashMap<ruint::Uint<256, 4>, Ptr> = HashMap::new();
-        // create hashmap of vk.const_lookup_input_expressions values to its vk memory location.
+        // create hashmap of vk.const_expressions values to its vk memory location.
         let offset = vk_m
             + (vk.constants.len() * 0x20)
             + (vk.fixed_comms.len() + vk.permutation_comms.len()) * 0x40;
-        // keys to the map are the values of vk.const_lookup_input_expressions and values are the memory location of the vk.const_lookup_input_expressions.
-        vk.const_lookup_input_expressions
+        // keys to the map are the values of vk.const_expressions and values are the memory location of the vk.const_expressions.
+        vk.const_expressions
             .iter()
             .enumerate()
             .for_each(|(idx, _)| {
                 let mptr = offset + (0x20 * idx);
                 let mptr = Ptr::memory(mptr);
-                vk_lookup_const_table.insert(vk.const_lookup_input_expressions[idx], mptr);
+                vk_lookup_const_table.insert(vk.const_expressions[idx], mptr);
             });
 
         let data = Data::new(&self.meta, &vk, vk_mptr, proof_cptr, true);
@@ -466,9 +466,7 @@ impl<'a> SolidityGenerator<'a> {
         let quotient_eval_numer_computations: Vec<Vec<String>> = chain![
             evaluator.gate_computations(),
             evaluator.permutation_computations(true),
-            evaluator
-                .lookup_computations(Some(vk_lookup_const_table), true)
-                .0
+            evaluator.lookup_computations(Some(vk_lookup_const_table), true)
         ]
         .enumerate()
         .map(|(idx, (mut lines, var))| {
