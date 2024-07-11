@@ -940,6 +940,7 @@ where
     U256::from_le_bytes(fe.borrow().to_repr())
 }
 
+#[cfg(feature = "mv-lookup")]
 pub(crate) fn expression_consts<F>(cs: &ConstraintSystem<F>) -> Vec<F>
 where
     F: PrimeField<Repr = [u8; 0x20]>,
@@ -983,6 +984,57 @@ where
         let expressions: &Vec<Vec<Expression<F>>> = lookup.input_expressions();
         expressions.iter().for_each(|arg| {
             evaluate_lookup_consts(arg, &mut inputs_consts);
+        });
+    });
+    // Remove duplicates while preserving order
+    let mut unique_inputs_consts = Vec::new();
+    for const_value in inputs_consts.clone() {
+        if !unique_inputs_consts.contains(&const_value) {
+            unique_inputs_consts.push(const_value);
+        }
+    }
+    unique_inputs_consts
+}
+
+#[cfg(not(feature = "mv-lookup"))]
+pub(crate) fn expression_consts<F>(cs: &ConstraintSystem<F>) -> Vec<F>
+where
+    F: PrimeField<Repr = [u8; 0x20]>,
+{
+    fn collect_constants<F: PrimeField>(expression: &Expression<F>, constants: &mut Vec<F>) {
+        match expression {
+            Expression::Constant(constant) => {
+                constants.push(*constant);
+            }
+            Expression::Negated(inner) => {
+                collect_constants(inner, constants);
+            }
+            Expression::Sum(lhs, rhs) => {
+                collect_constants(lhs, constants);
+                collect_constants(rhs, constants);
+            }
+            Expression::Product(lhs, rhs) => {
+                collect_constants(lhs, constants);
+                collect_constants(rhs, constants);
+            }
+            Expression::Scaled(inner, scalar) => {
+                collect_constants(inner, constants);
+                // we consider scalar values constants
+                constants.push(*scalar);
+            }
+            _ => {}
+        }
+    }
+
+    let mut inputs_consts: Vec<F> = Vec::new();
+    cs.gates()
+        .iter()
+        .flat_map(Gate::polynomials)
+        .for_each(|expression| collect_constants(expression, &mut inputs_consts));
+    cs.lookups().iter().for_each(|lookup| {
+        let expressions: &Vec<Expression<F>> = lookup.input_expressions();
+        expressions.iter().for_each(|arg| {
+            collect_constants(arg, &mut inputs_consts);
         });
     });
     // Remove duplicates while preserving order
