@@ -14,7 +14,8 @@ pub(crate) struct Halo2VerifyingKey {
     pub(crate) fixed_comms: Vec<(U256, U256)>,
     pub(crate) permutation_comms: Vec<(U256, U256)>,
     pub(crate) const_expressions: Vec<U256>,
-    pub(crate) gate_computations_lens: Vec<U256>,
+    pub(crate) gate_computations: Vec<(Vec<U256>,usize)>,
+    pub(crate) gate_computations_total_length: usize
 }
 
 impl Halo2VerifyingKey {
@@ -23,7 +24,10 @@ impl Halo2VerifyingKey {
             + (self.fixed_comms.len() + self.permutation_comms.len()) * 0x40
             + (self.const_expressions.len() * 0x20)
             + ((self.num_advices_user_challenges.len() * 0x40) + 0x20)
-            + (self.gate_computations_lens.len() * 0x20 + 0x20)
+            // The length words of the inner vector + length word of the outer vector
+            + (self.gate_computations.len() * 0x20 + 0x20) 
+            // Sum up the lengths of al the nested vectors
+            + (self.gate_computations_total_length * 0x20)
     }
 }
 

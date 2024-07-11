@@ -1,11 +1,13 @@
 use crate::codegen::{
-    evaluator::Evaluator,
+    evaluator::{Evaluator, EvaluatorVK},
     pcs::{
         bdfg21_computations, queries, rotation_sets,
         BatchOpenScheme::{Bdfg21, Gwc19},
     },
     template::{Halo2Verifier, Halo2VerifyingKey},
-    util::{fr_to_u256, g1_to_u256s, g2_to_u256s, ConstraintSystemMeta, Data, Ptr},
+    util::{
+        expression_consts, fr_to_u256, g1_to_u256s, g2_to_u256s, ConstraintSystemMeta, Data, Ptr,
+    },
 };
 use halo2_proofs::{
     halo2curves::{bn256, ff::Field},
@@ -274,31 +276,43 @@ impl<'a> SolidityGenerator<'a> {
             permutation_comms: permutation_comms.clone(),
             const_expressions: vec![],
             num_advices_user_challenges: vec![],
-            gate_computations_lens: vec![],
+            gate_computations: vec![],
+            gate_computations_total_length: 0,
         };
 
         if !separate {
             return attached_vk;
         }
+        // Pass a vk.len() to estimate_static_working_memory.
 
-        let vk_mptr_mock = Ptr::memory(
-            self.estimate_static_working_memory_size(&attached_vk, Ptr::calldata(0x84)),
-        );
+        let vk_mptr_mock =
+            self.estimate_static_working_memory_size(&attached_vk, Ptr::calldata(0x84));
         let data = Data::new(
             &self.meta,
             &attached_vk,
-            vk_mptr_mock,
+            Ptr::memory(vk_mptr_mock),
             Ptr::calldata(0x84),
             true,
         );
 
-        let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
-
-        let const_expressions = evaluator
-            .expression_consts()
+        let const_expressions = expression_consts(self.vk.cs())
             .into_iter()
             .map(fr_to_u256)
             .collect::<Vec<_>>();
+
+        let mut vk_lookup_const_table_dummy: HashMap<ruint::Uint<256, 4>, Ptr> = HashMap::new();
+        let offset = vk_mptr_mock
+            + (attached_vk.constants.len() * 0x20)
+            + (attached_vk.fixed_comms.len() + attached_vk.permutation_comms.len()) * 0x40;
+        // keys to the map are the values of vk.const_expressions and values are the memory location of the vk.const_expressions.
+        const_expressions.iter().enumerate().for_each(|(idx, _)| {
+            let mptr = offset + (0x20 * idx);
+            let mptr = Ptr::memory(mptr);
+            vk_lookup_const_table_dummy.insert(const_expressions[idx], mptr);
+        });
+
+        let evaluator_dummy =
+            EvaluatorVK::new(self.vk.cs(), &self.meta, &data, vk_lookup_const_table_dummy);
 
         let instance_cptr = U256::from((self.meta.proof_len(self.scheme)) + 0xa4);
 
@@ -321,10 +335,6 @@ impl<'a> SolidityGenerator<'a> {
             U256::from(last_quotient_x_cptr.value().as_usize()),
         );
 
-        let gate_computations_lens: Vec<U256> = chain![evaluator.gate_computations()]
-            .map(|(lines, _)| U256::from(lines.len()))
-            .collect();
-
         let num_advices = self.meta.num_advices();
         let num_user_challenges = self.meta.num_challenges();
         // truncate the last elements of num_user_challenges to match the length of num_advices.
@@ -341,6 +351,19 @@ impl<'a> SolidityGenerator<'a> {
                 (U256::from(*num_advices), U256::from(*num_user_challenges))
             })
             .collect_vec();
+
+        // Fill in the gate computations with dummy values.
+        let mut cumulative_length = 0;
+        let dummy_gate_computations: Vec<(Vec<U256>, usize)> =
+            chain![evaluator_dummy.gate_computations()]
+                .map(|(lines, _)| {
+                    let operations = lines.iter().map(|_line| U256::from(0)).collect::<Vec<_>>();
+                    let length = operations.len();
+                    let gate_computation = (operations, cumulative_length);
+                    cumulative_length += length;
+                    gate_computation
+                })
+                .collect();
 
         let num_advices_user_challenges_offset = (constants.len() * 0x20)
             + (fixed_comms.len() + permutation_comms.len()) * 0x40
@@ -361,25 +384,58 @@ impl<'a> SolidityGenerator<'a> {
             U256::from(gate_computations_len_offset),
         );
 
-        // Collect the gate computations expressions
-
         let mut vk = Halo2VerifyingKey {
             constants,
             fixed_comms,
             permutation_comms,
             const_expressions,
             num_advices_user_challenges,
-            gate_computations_lens,
+            gate_computations: dummy_gate_computations,
+            gate_computations_total_length: cumulative_length,
         };
-        // new generate the real vk_mptr
-        let vk_mptr = Ptr::memory(
-            self.estimate_static_working_memory_size(&attached_vk, Ptr::calldata(0x84)),
-        );
+        // Now generate the real vk_mptr with a vk that has the correct length
+        let vk_mptr = self.estimate_static_working_memory_size(&attached_vk, Ptr::calldata(0x84));
         // replace the mock vk_mptr with the real vk_mptr
-        vk.constants[1] = ("vk_mptr", U256::from(vk_mptr.value().as_usize()));
+        vk.constants[1] = ("vk_mptr", U256::from(vk_mptr));
         // replace the mock vk_len with the real vk_len
         let vk_len = vk.len();
         vk.constants[2] = ("vk_len", U256::from(vk_len));
+
+        // Regenerate the gate computations with the correct offsets.
+        let mut vk_lookup_const_table: HashMap<ruint::Uint<256, 4>, Ptr> = HashMap::new();
+        // create hashmap of vk.const_expressions values to its vk memory location.
+        let offset = vk_mptr
+            + (vk.constants.len() * 0x20)
+            + (vk.fixed_comms.len() + vk.permutation_comms.len()) * 0x40;
+        // keys to the map are the values of vk.const_expressions and values are the memory location of the vk.const_expressions.
+        vk.const_expressions
+            .iter()
+            .enumerate()
+            .for_each(|(idx, _)| {
+                let mptr = offset + (0x20 * idx);
+                let mptr = Ptr::memory(mptr);
+                vk_lookup_const_table.insert(vk.const_expressions[idx], mptr);
+            });
+
+        // Now we initalize the real evaluator_vk which will contain the correct offsets in the vk_lookup_const_table.
+        let evaluator = EvaluatorVK::new(self.vk.cs(), &self.meta, &data, vk_lookup_const_table);
+
+        let mut cumulative_length = 0;
+        let gate_computations: Vec<(Vec<U256>, usize)> = chain![evaluator.gate_computations()]
+            .map(|(lines, _)| {
+                let operations = lines
+                    .iter()
+                    .map(|line: &ruint::Uint<256, 4>| U256::from(*line))
+                    .collect::<Vec<_>>();
+                let length = operations.len() * 0x20;
+                let gate_computation = (operations, cumulative_length);
+                cumulative_length += length;
+                gate_computation
+            })
+            .collect();
+
+        vk.gate_computations = gate_computations;
+        // NOTE: We don't need to replace the gate_computations_total_length since we are only potentially modifying the offsets for each constant mload operation.
         vk
     }
 

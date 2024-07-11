@@ -4,7 +4,7 @@ use crate::codegen::{
 };
 use halo2_proofs::{
     halo2curves::{bn256, ff::PrimeField, CurveAffine},
-    plonk::{Any, Column, ConstraintSystem},
+    plonk::{Any, Column, ConstraintSystem, Expression, Gate},
 };
 use itertools::{chain, izip, Itertools};
 use ruint::{aliases::U256, UintTryFrom};
@@ -402,7 +402,8 @@ impl Data {
             + (2 * vk.permutation_comms.len())
             + vk.const_expressions.len()
             + (2 * vk.num_advices_user_challenges.len() + 1)
-            + (vk.gate_computations_lens.len() + 1);
+            + (vk.gate_computations.len() + 1)
+            + (vk.gate_computations_total_length);
         let theta_mptr = challenge_mptr + meta.challenge_indices.len();
 
         let advice_comm_start = proof_cptr;
@@ -937,6 +938,61 @@ where
     F: PrimeField<Repr = [u8; 0x20]>,
 {
     U256::from_le_bytes(fe.borrow().to_repr())
+}
+
+pub(crate) fn expression_consts<F>(cs: &ConstraintSystem<F>) -> Vec<F>
+where
+    F: PrimeField<Repr = [u8; 0x20]>,
+{
+    fn collect_constants<F: PrimeField>(expression: &Expression<F>, constants: &mut Vec<F>) {
+        match expression {
+            Expression::Constant(constant) => {
+                constants.push(*constant);
+            }
+            Expression::Negated(inner) => {
+                collect_constants(inner, constants);
+            }
+            Expression::Sum(lhs, rhs) => {
+                collect_constants(lhs, constants);
+                collect_constants(rhs, constants);
+            }
+            Expression::Product(lhs, rhs) => {
+                collect_constants(lhs, constants);
+                collect_constants(rhs, constants);
+            }
+            Expression::Scaled(inner, scalar) => {
+                collect_constants(inner, constants);
+                // we consider scalar values constants
+                constants.push(*scalar);
+            }
+            _ => {}
+        }
+    }
+
+    let mut inputs_consts: Vec<F> = Vec::new();
+    cs.gates()
+        .iter()
+        .flat_map(Gate::polynomials)
+        .for_each(|expression| collect_constants(expression, &mut inputs_consts));
+    let evaluate_lookup_consts = |expressions: &Vec<_>, constants: &mut Vec<F>| {
+        expressions.iter().for_each(|expression| {
+            collect_constants(expression, constants);
+        });
+    };
+    cs.lookups().iter().for_each(|lookup| {
+        let expressions: &Vec<Vec<Expression<F>>> = lookup.input_expressions();
+        expressions.iter().for_each(|arg| {
+            evaluate_lookup_consts(arg, &mut inputs_consts);
+        });
+    });
+    // Remove duplicates while preserving order
+    let mut unique_inputs_consts = Vec::new();
+    for const_value in inputs_consts.clone() {
+        if !unique_inputs_consts.contains(&const_value) {
+            unique_inputs_consts.push(const_value);
+        }
+    }
+    unique_inputs_consts
 }
 
 pub(crate) fn to_u256_be_bytes<T>(value: T) -> [u8; 32]

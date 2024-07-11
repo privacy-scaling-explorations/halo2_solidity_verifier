@@ -406,23 +406,24 @@ contract Halo2Verifier {
             // {
             //     let quotient_eval_numer
             //     let y := mload(add(theta_mptr, 0x60))
-            //     let code_blocks_offset_ptr := add(vk_mptr,(add(vk_mptr, 0x380)))
-            //     let code_blocks_lens_len := mload(code_blocks_offset_ptr) // Remember this length represented in bytes
-            //     let code_blocks_len_offset := mload(add(code_blocks_lens_len, 0x20)) 
+            //     let gate_computations_ptr := add(vk_mptr,(add(vk_mptr, 0x380)))
+            //     let gate_computations_len := mload(gate_computations_ptr) // Remember this length represented in bytes
+            //     let gate_computations := mload(add(gate_computations_ptr, 0x20)) 
             //     let expressions_ptr := add(vk_mptr, EXPRESSIONS_OFFSET) // TODO fill in the correct offset
             //     let expression := 0x0 // Initialize this to 0. Will set it later in the loop
-            //     let experssion_words_counter := 0
+            //     let expression_acc := 0
             //     let free_static_memory_ptr := 0x20 // Initialize at 0x20 b/c 0x00 to store vars that need to persist across certain code blocks
             //     let constants_ptr := add(vk_mptr, CONSTANTS_OFFSET) // TODO fill in the correct offset
             //     // Load in the total number of code blocks from the vk constants, right after the number challenges
-            //     for { let code_block := 0 } lt(code_block, code_blocks_lens_len) { code_block := add(code_block, 0x20) } {
+            //     for { let code_block := 0 } lt(code_block, gate_computations_len) { code_block := add(code_block, 0x20) } {
+            //         let code_ptr := add(add(gate_computations, code_block), expression_acc)
             //         // Shift the code_len by the free_static_memory_ptr
-            //         let code_len := add(mload(add(code_blocks_len_offset, code_block)), free_static_memory_ptr)
+            //         let code_len := add(mload(code_ptr), free_static_memory_ptr)
             //         // loop through code len
             //         for { let i := free_static_memory_ptr } lt(i, code_len) { i := add(i, 0x20) } {
             //             /// @dev Note we can optimize the amount of space the expressions take up by packing 32/5 == 6 expressions into a single word
-            //             expression := mload(add(expressions_ptr, experssion_words_counter))
-            //             experssion_words_counter := add(experssion_words_counter, 0x20)
+            //             expression := mload(add(code_ptr, i))
+            //             expression_acc := add(expression_acc, 0x20)
             //             // Load in the least significant byte located of the `expression` word to get the operation type
             //             let byte := and(expression, 0xFF)
                         
@@ -442,13 +443,13 @@ contract Halo2Verifier {
             //             else if (eq(byte, 0x02)) {
             //                 // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
             //                 // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
-            //                 mstore(i,addmod(mload(and(shr(24, expressions), 0xFFFF)),mload(and(shr(8, expressions), 0xFFFF)),r))
+            //                 mstore(i,addmod(mload(and(shr(8, expressions), 0xFFFF)),mload(and(shr(24, expressions), 0xFFFF)),r))
             //             }
             //             // 0x03 => Product/scalar expression
             //             else if (eq(byte, 0x03)) {
             //                 // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
             //                 // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
-            //                 mstore(i,mulmod(mload(and(shr(24, expressions), 0xFFFF)),mload(and(shr(8, expressions), 0xFFFF)),r))
+            //                 mstore(i,mulmod(mload(and(shr(8, expressions), 0xFFFF)),mload(and(shr(24, expressions), 0xFFFF)),r))
             //             }
             //         }
             //         // at the end of each code block we update `quotient_eval_numer`

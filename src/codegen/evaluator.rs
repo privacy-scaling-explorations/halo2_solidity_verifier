@@ -13,7 +13,7 @@ use regex::Regex;
 use ruint::aliases::U256;
 use std::{cell::RefCell, cmp::Ordering, collections::HashMap, iter};
 
-use super::util::get_memory_ptr;
+use super::util::{get_memory_ptr, Ptr};
 
 #[derive(Debug)]
 pub(crate) struct Evaluator<'a, F: PrimeField> {
@@ -24,20 +24,6 @@ pub(crate) struct Evaluator<'a, F: PrimeField> {
     var_cache: RefCell<HashMap<String, String>>,
 }
 
-// // Define an enum which catagorizes the operand memory location:
-// // calldata_mptr
-// // constant_mptr
-// // instance_mptr
-// // chllenge_mptr
-// // static_memory_ptr
-// #[derive(Clone, PartialEq, Eq)]
-// pub enum OperandMem {
-//     Calldata,
-//     Constant,
-//     Instance,
-//     Challenge,
-//     StaticMemory,
-// }
 impl<'a, F> Evaluator<'a, F>
 where
     F: PrimeField<Repr = [u8; 0x20]>,
@@ -56,34 +42,6 @@ where
         }
     }
 
-    pub fn expression_consts(&self) -> Vec<F> {
-        let mut inputs_consts: Vec<F> = Vec::new();
-        self.cs
-            .gates()
-            .iter()
-            .flat_map(Gate::polynomials)
-            .for_each(|expression| self.collect_constants(expression, &mut inputs_consts));
-        let evaluate_lookup_consts = |expressions: &Vec<_>, constants: &mut Vec<F>| {
-            expressions.iter().for_each(|expression| {
-                self.collect_constants(expression, constants);
-            });
-        };
-        self.cs.lookups().iter().for_each(|lookup| {
-            let expressions: &Vec<Vec<Expression<F>>> = lookup.input_expressions();
-            expressions.iter().for_each(|arg| {
-                evaluate_lookup_consts(arg, &mut inputs_consts);
-            });
-        });
-        // Remove duplicates while preserving order
-        let mut unique_inputs_consts = Vec::new();
-        for const_value in inputs_consts.clone() {
-            if !unique_inputs_consts.contains(&const_value) {
-                unique_inputs_consts.push(const_value);
-            }
-        }
-        unique_inputs_consts
-    }
-
     pub fn gate_computations(&self) -> Vec<(Vec<String>, String)> {
         self.cs
             .gates()
@@ -92,15 +50,6 @@ where
             .map(|expression| self.evaluate_and_reset(expression))
             .collect()
     }
-
-    // pub fn gate_computation_separate_vk(&self) -> Vec<Vec<U256>> {
-    //     self.cs
-    //         .gates()
-    //         .iter()
-    //         .flat_map(Gate::polynomials)
-    //         .map(|expression| self.evaluate_and_reset(expression))
-    //         .collect()
-    // }
 
     pub fn permutation_computations(&self, separate: bool) -> Vec<(Vec<String>, String)> {
         let Self { meta, data, .. } = self;
@@ -371,11 +320,6 @@ where
         _vk_lookup_const_table: Option<HashMap<ruint::Uint<256, 4>, super::util::Ptr>>,
         _separate: bool,
     ) -> Vec<(Vec<String>, String)> {
-        let _ = |expressions: &Vec<_>, constants: &mut Vec<F>| {
-            expressions.iter().for_each(|expression| {
-                self.collect_constants(expression, constants);
-            });
-        };
         let input_tables = self
             .cs
             .lookups()
@@ -494,83 +438,6 @@ where
         result
     }
 
-    // fn evaluate_and_encode(&self, expression: &Expression<F>) -> Vec<U256> {
-    //     evaluate(
-    //         expression,
-    //         &|constant| {
-    //             let constant = u256_string(constant);
-    //             self.init_encoded_var(constant, OperandMem::Constant)
-    //         },
-    //         &|query| {
-    //             self.init_var(
-    //                 self.eval(Fixed, query.column_index(), query.rotation().0),
-    //                 Some(fixed_eval_var(query)),
-    //             )
-    //         },
-    //         &|query| {
-    //             self.init_var(
-    //                 self.eval(Advice::default(), query.column_index(), query.rotation().0),
-    //                 Some(advice_eval_var(query)),
-    //             )
-    //         },
-    //         &|_| self.init_var(self.data.instance_eval, Some("i_eval".to_string())),
-    //         &|challenge| {
-    //             self.init_var(
-    //                 self.data.challenges[challenge.index()],
-    //                 Some(format!("c_{}", challenge.index())),
-    //             )
-    //         },
-    //         &|(mut acc, var)| {
-    //             let (lines, var) = self.init_var(format!("sub(r, {var})"), None);
-    //             acc.extend(lines);
-    //             (acc, var)
-    //         },
-    //         &|(mut lhs_acc, lhs_var), (rhs_acc, rhs_var)| {
-    //             let (lines, var) = self.init_var(format!("addmod({lhs_var}, {rhs_var}, r)"), None);
-    //             lhs_acc.extend(rhs_acc);
-    //             lhs_acc.extend(lines);
-    //             (lhs_acc, var)
-    //         },
-    //         &|(mut lhs_acc, lhs_var), (rhs_acc, rhs_var)| {
-    //             let (lines, var) = self.init_var(format!("mulmod({lhs_var}, {rhs_var}, r)"), None);
-    //             lhs_acc.extend(rhs_acc);
-    //             lhs_acc.extend(lines);
-    //             (lhs_acc, var)
-    //         },
-    //         &|(mut acc, var), scalar| {
-    //             let scalar = u256_string(scalar);
-    //             let (lines, var) = self.init_var(format!("mulmod({var}, {scalar}, r)"), None);
-    //             acc.extend(lines);
-    //             (acc, var)
-    //         },
-    //     )
-    // }
-
-    #[allow(clippy::only_used_in_recursion)]
-    #[allow(dead_code)]
-    fn collect_constants(&self, expression: &Expression<F>, constants: &mut Vec<F>) {
-        match expression {
-            Expression::Constant(constant) => {
-                constants.push(*constant);
-            }
-            Expression::Negated(inner) => {
-                self.collect_constants(inner, constants);
-            }
-            Expression::Sum(lhs, rhs) => {
-                self.collect_constants(lhs, constants);
-                self.collect_constants(rhs, constants);
-            }
-            Expression::Product(lhs, rhs) => {
-                self.collect_constants(lhs, constants);
-                self.collect_constants(rhs, constants);
-            }
-            Expression::Scaled(inner, _scalar) => {
-                self.collect_constants(inner, constants);
-            }
-            _ => {}
-        }
-    }
-
     fn evaluate(&self, expression: &Expression<F>) -> (Vec<String>, String) {
         evaluate(
             expression,
@@ -641,25 +508,237 @@ where
         *self.var_counter.borrow_mut() += 1;
         format!("var{count}")
     }
+}
+
+#[derive(Debug)]
+pub(crate) struct EvaluatorVK<'a, F: PrimeField> {
+    cs: &'a ConstraintSystem<F>,
+    #[allow(dead_code)]
+    meta: &'a ConstraintSystemMeta,
+    data: &'a Data,
+    static_mem_ptr: RefCell<usize>,
+    encoded_var_cache: RefCell<HashMap<U256, U256>>,
+    const_cache: RefCell<HashMap<ruint::Uint<256, 4>, Ptr>>,
+}
+
+// // Define an enum which catagorizes the operand memory location:
+// // calldata_mptr
+// // constant_mptr
+// // instance_mptr
+// // chllenge_mptr
+// // static_memory_ptr
+#[derive(Clone, PartialEq, Eq)]
+pub enum OperandMem {
+    Calldata,
+    Constant,
+    Instance,
+    Challenge,
+    StaticMemory,
+}
+
+impl<'a, F> EvaluatorVK<'a, F>
+where
+    F: PrimeField<Repr = [u8; 0x20]>,
+{
+    pub(crate) fn new(
+        cs: &'a ConstraintSystem<F>,
+        meta: &'a ConstraintSystemMeta,
+        data: &'a Data,
+        const_cache: HashMap<ruint::Uint<256, 4>, Ptr>,
+    ) -> Self {
+        Self {
+            cs,
+            meta,
+            data,
+            static_mem_ptr: RefCell::new(0x20),
+            encoded_var_cache: Default::default(),
+            const_cache: RefCell::new(const_cache),
+        }
+    }
+
+    pub fn gate_computations(&self) -> Vec<(Vec<U256>, U256)> {
+        self.cs
+            .gates()
+            .iter()
+            .flat_map(Gate::polynomials)
+            .map(|expression| self.evaluate_and_reset(expression))
+            .collect()
+    }
+
+    // pub fn permutation_computations(&self, _separate: bool) -> Vec<(Vec<String>, String)> {
+    //     todo!()
+    // }
+
+    // #[cfg(feature = "mv-lookup")]
+    // pub fn lookup_computations(
+    //     &self,
+    //     _vk_lookup_const_table: Option<HashMap<ruint::Uint<256, 4>, super::util::Ptr>>,
+    //     _separate: bool,
+    // ) -> Vec<(Vec<String>, String)> {
+    //     todo!()
+    // }
+
+    // #[cfg(not(feature = "mv-lookup"))]
+    // pub fn lookup_computations(
+    //     &self,
+    //     _vk_lookup_const_table: Option<HashMap<ruint::Uint<256, 4>, super::util::Ptr>>,
+    //     _separate: bool,
+    // ) -> Vec<(Vec<String>, String)> {
+    //     todo!()
+    // }
+
+    fn eval_encoded(
+        &self,
+        column_type: impl Into<Any>,
+        column_index: usize,
+        rotation: i32,
+    ) -> U256 {
+        match column_type.into() {
+            Any::Advice(_) => self.encode_single_operand(
+                0_u8,
+                U256::from(
+                    self.data.advice_evals[&(column_index, rotation)]
+                        .ptr()
+                        .value()
+                        .as_usize(),
+                ),
+            ),
+            Any::Fixed => self.encode_single_operand(
+                0_u8,
+                U256::from(
+                    self.data.fixed_evals[&(column_index, rotation)]
+                        .ptr()
+                        .value()
+                        .as_usize(),
+                ),
+            ),
+            Any::Instance => unimplemented!(),
+        }
+    }
+
+    fn reset(&self) {
+        *self.static_mem_ptr.borrow_mut() = Default::default();
+        *self.encoded_var_cache.borrow_mut() = Default::default();
+        *self.const_cache.borrow_mut() = Default::default();
+    }
+
+    fn encode_operation(&self, op: u8, lhs_ptr: U256, rhs_ptr: U256) -> U256 {
+        U256::from(op) | (lhs_ptr << 8) | (rhs_ptr << 24)
+    }
+
+    fn encode_single_operand(&self, op: u8, ptr: U256) -> U256 {
+        U256::from(op) | (ptr << 8)
+    }
+
+    fn evaluate_and_reset(&self, expression: &Expression<F>) -> (Vec<U256>, U256) {
+        let result = self.evaluate_encode(expression);
+        self.reset();
+        result
+    }
+
+    fn evaluate_encode(&self, expression: &Expression<F>) -> (Vec<U256>, U256) {
+        evaluate(
+            expression,
+            &|constant| self.init_encoded_var(constant, OperandMem::Constant),
+            &|query| {
+                self.init_encoded_var(
+                    self.eval_encoded(Fixed, query.column_index(), query.rotation().0),
+                    OperandMem::Calldata,
+                )
+            },
+            &|query| {
+                self.init_encoded_var(
+                    self.eval_encoded(Advice::default(), query.column_index(), query.rotation().0),
+                    OperandMem::Calldata,
+                )
+            },
+            &|_| {
+                self.init_encoded_var(
+                    U256::from(self.data.instance_eval.ptr().value().as_usize()),
+                    OperandMem::Instance,
+                )
+            },
+            &|challenge| {
+                self.init_encoded_var(
+                    U256::from(
+                        self.data.challenges[challenge.index()]
+                            .ptr()
+                            .value()
+                            .as_usize(),
+                    ),
+                    OperandMem::Challenge,
+                )
+            },
+            &|(mut acc, var)| {
+                let (lines, var) = self.init_encoded_var(
+                    self.encode_single_operand(1_u8, var),
+                    OperandMem::StaticMemory,
+                );
+                acc.extend(lines);
+                (acc, var)
+            },
+            &|(mut lhs_acc, lhs_var), (rhs_acc, rhs_var)| {
+                let (lines, var) = self.init_encoded_var(
+                    self.encode_operation(2_u8, lhs_var, rhs_var),
+                    OperandMem::StaticMemory,
+                );
+                lhs_acc.extend(rhs_acc);
+                lhs_acc.extend(lines);
+                (lhs_acc, var)
+            },
+            &|(mut lhs_acc, lhs_var), (rhs_acc, rhs_var)| {
+                let (lines, var) = self.init_encoded_var(
+                    self.encode_operation(3_u8, lhs_var, rhs_var),
+                    OperandMem::StaticMemory,
+                );
+                lhs_acc.extend(rhs_acc);
+                lhs_acc.extend(lines);
+                (lhs_acc, var)
+            },
+            &|(mut acc, var), scalar| {
+                // fetch the scalar pointer from the const cache
+                let scalar_ptr = self.const_cache.borrow()[&scalar];
+                let (lines, var) = self.init_encoded_var(
+                    self.encode_operation(3_u8, var, U256::from(scalar_ptr.value().as_usize())),
+                    OperandMem::StaticMemory,
+                );
+                acc.extend(lines);
+                (acc, var)
+            },
+        )
+    }
 
     // Return the encoded word and the static memory pointer
-    // fn init_encoded_var(
-    //     &self,
-    //     value: impl ToString,
-    //     var: OperandMem,
-    //     static_mem_ptr: usize,
-    // ) -> (Vec<U256>, usize) {
-    //     let value = value.to_string();
-    //     if self.var_cache.borrow().contains_key(&value) {
-    //         (vec![], self.var_cache.borrow()[&value].clone())
-    //     } else {
-    //         let var = var.unwrap_or_else(|| self.next_var());
-    //         self.var_cache
-    //             .borrow_mut()
-    //             .insert(value.clone(), var.clone());
-    //         (vec![format!("let {var} := {value}")], var)
-    //     }
-    // }
+    fn init_encoded_var(&self, value: U256, var: OperandMem) -> (Vec<U256>, U256) {
+        match var {
+            OperandMem::Calldata | OperandMem::StaticMemory => {
+                if self.encoded_var_cache.borrow().contains_key(&value) {
+                    (vec![], self.encoded_var_cache.borrow()[&value])
+                } else {
+                    let var = self.next_encoded_var();
+                    self.encoded_var_cache.borrow_mut().insert(value, var);
+                    (vec![value], var)
+                }
+            }
+            OperandMem::Constant => (
+                vec![],
+                U256::from(self.const_cache.borrow().get(&value).map_or_else(
+                    || {
+                        println!("Key not found: {}", value);
+                        0 // Default value, you can change this if needed
+                    },
+                    |entry| entry.value().as_usize(),
+                )),
+            ),
+            OperandMem::Instance | OperandMem::Challenge => (vec![], value),
+        }
+    }
+
+    fn next_encoded_var(&self) -> U256 {
+        let count = *self.static_mem_ptr.borrow();
+        *self.static_mem_ptr.borrow_mut() += 0x20;
+        U256::from(count)
+    }
 }
 
 fn u256_string(value: U256) -> String {
