@@ -619,7 +619,6 @@ where
     fn reset(&self) {
         *self.static_mem_ptr.borrow_mut() = Default::default();
         *self.encoded_var_cache.borrow_mut() = Default::default();
-        *self.const_cache.borrow_mut() = Default::default();
     }
 
     fn encode_operation(&self, op: u8, lhs_ptr: U256, rhs_ptr: U256) -> U256 {

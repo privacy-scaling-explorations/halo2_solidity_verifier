@@ -310,7 +310,6 @@ impl<'a> SolidityGenerator<'a> {
             let mptr = Ptr::memory(mptr);
             vk_lookup_const_table_dummy.insert(const_expressions[idx], mptr);
         });
-
         let evaluator_dummy =
             EvaluatorVK::new(self.vk.cs(), &self.meta, &data, vk_lookup_const_table_dummy);
 
