@@ -6,6 +6,7 @@ contract Halo2Verifier {
     uint256 internal constant    PROOF_LEN_CPTR = 0x64;
     uint256 internal constant    PROOF_CPTR = 0x84;
     uint256 internal constant    Q = 21888242871839275222246405745257275088696311157297823662689037894645226208583;
+    uint256 internal constant    R = 21888242871839275222246405745257275088548364400416034343698204186575808495617; // BN254 scalar field
     uint256 internal constant    DELTA = 4131629893567559867359510883348571134090853742863529169391034518566172092834;
 
 
@@ -36,9 +37,9 @@ contract Halo2Verifier {
             // and store hash mod r as challenge in challenge_mptr,
             // and push back hash in 0x00 as the first input for next squeeze.
             // Return updated (challenge_mptr, hash_mptr).
-            function squeeze_challenge(challenge_mptr, hash_mptr, r) -> ret0, ret1 {
+            function squeeze_challenge(challenge_mptr, hash_mptr) -> ret0, ret1 {
                 let hash := keccak256(0x00, hash_mptr)
-                mstore(challenge_mptr, mod(hash, r))
+                mstore(challenge_mptr, mod(hash, R))
                 mstore(0x00, hash)
                 ret0 := add(challenge_mptr, 0x20)
                 ret1 := 0x20
@@ -49,10 +50,10 @@ contract Halo2Verifier {
             // and store hash mod r as challenge in challenge_mptr,
             // and push back hash in 0x00 as the first input for next squeeze.
             // Return updated (challenge_mptr).
-            function squeeze_challenge_cont(challenge_mptr, r) -> ret {
+            function squeeze_challenge_cont(challenge_mptr) -> ret {
                 mstore8(0x20, 0x01)
                 let hash := keccak256(0x00, 0x21)
-                mstore(challenge_mptr, mod(hash, r))
+                mstore(challenge_mptr, mod(hash, R))
                 mstore(0x00, hash)
                 ret := add(challenge_mptr, 0x20)
             }
@@ -153,7 +154,6 @@ contract Halo2Verifier {
             }
 
             // Modulus
-            let r := 21888242871839275222246405745257275088548364400416034343698204186575808495617 // BN254 scalar field
 
             // Initialize success as true
             let success := true
@@ -187,7 +187,7 @@ contract Halo2Verifier {
                     {}
                 {
                     let instance := calldataload(instance_cptr)
-                    success := and(success, lt(instance, r))
+                    success := and(success, lt(instance, R))
                     mstore(hash_mptr, instance)
                     instance_cptr := add(instance_cptr, 0x20)
                     hash_mptr := add(hash_mptr, 0x20)
@@ -203,9 +203,9 @@ contract Halo2Verifier {
                 let challenges_ptr := add(advices_ptr, 0x20) // start of challenges
 
                 // Iterate over phases using the loaded num_advices and num_challenges
-                for { let phase := 0 } lt(phase, num_advices_len) { phase := add(phase, 1) } {
+                for { let phase := 0 } lt(phase, num_advices_len) { phase := add(phase, 0x40) } {
                     // Calculate proof_cptr_end based on num_advices
-                    let proof_cptr_end := add(proof_cptr, mul(0x40, mload(add(advices_ptr, mul(phase, 0x40))))) // We use 0x40 because each advice is followed by the corresponding challenge
+                    let proof_cptr_end := add(proof_cptr, mul(0x40, mload(add(advices_ptr, phase)))) // We use 0x40 because each advice is followed by the corresponding challenge
 
                     // Phase loop
                     for { } lt(proof_cptr, proof_cptr_end) { } {
@@ -213,11 +213,11 @@ contract Halo2Verifier {
                     }
 
                     // Generate challenges
-                    challenge_mptr, hash_mptr := squeeze_challenge(challenge_mptr, hash_mptr, r)
+                    challenge_mptr, hash_mptr := squeeze_challenge(challenge_mptr, hash_mptr)
 
                     // Continue squeezing challenges based on num_challenges
-                    for { let c := 1 } lt(c, mload(add(challenges_ptr, mul(phase, 0x40)))) { c := add(c, 1) } { // We 
-                        challenge_mptr := squeeze_challenge_cont(challenge_mptr, r)
+                    for { let c := 1 } lt(c, mload(add(challenges_ptr, phase))) { c := add(c, 1) } { // We 
+                        challenge_mptr := squeeze_challenge_cont(challenge_mptr)
                     }
                 }
 
@@ -228,7 +228,7 @@ contract Halo2Verifier {
                     {}
                 {
                     let eval := calldataload(proof_cptr)
-                    success := and(success, lt(eval, r))
+                    success := and(success, lt(eval, R))
                     mstore(hash_mptr, eval)
                     proof_cptr := add(proof_cptr, 0x20)
                     hash_mptr := add(hash_mptr, 0x20)
@@ -237,12 +237,12 @@ contract Halo2Verifier {
                 // Read batch opening proof and generate challenges
                 {%- match scheme %}
                 {%- when Bdfg21 %}
-                challenge_mptr, hash_mptr := squeeze_challenge(challenge_mptr, hash_mptr, r)       // zeta
-                challenge_mptr := squeeze_challenge_cont(challenge_mptr, r)                        // nu
+                challenge_mptr, hash_mptr := squeeze_challenge(challenge_mptr, hash_mptr)       // zeta
+                challenge_mptr := squeeze_challenge_cont(challenge_mptr)                        // nu
 
                 success, proof_cptr, hash_mptr := read_ec_point(success, proof_cptr, hash_mptr) // W
 
-                challenge_mptr, hash_mptr := squeeze_challenge(challenge_mptr, hash_mptr, r)       // mu
+                challenge_mptr, hash_mptr := squeeze_challenge(challenge_mptr, hash_mptr)       // mu
 
                 success, proof_cptr, hash_mptr := read_ec_point(success, proof_cptr, hash_mptr) // W'
                 {%- when Gwc19 %}
@@ -308,7 +308,7 @@ contract Halo2Verifier {
                     lt(idx, k)
                     { idx := add(idx, 1) }
                 {
-                    x_n := mulmod(x_n, x_n, r)
+                    x_n := mulmod(x_n, x_n, R)
                 }
 
                 let omega := mload(add(vk_mptr, 0x140))
@@ -324,22 +324,22 @@ contract Halo2Verifier {
                     lt(mptr, mptr_end)
                     { mptr := add(mptr, 0x20) }
                 {
-                    mstore(mptr, addmod(x, sub(r, pow_of_omega), r))
-                    pow_of_omega := mulmod(pow_of_omega, omega, r)
+                    mstore(mptr, addmod(x, sub(R, pow_of_omega),R))
+                    pow_of_omega := mulmod(pow_of_omega, omega,R)
                 }
-                let x_n_minus_1 := addmod(x_n, sub(r, 1), r)
+                let x_n_minus_1 := addmod(x_n, sub(R, 1),R)
                 mstore(mptr_end, x_n_minus_1)
-                success := batch_invert(success, x_n_mptr, add(mptr_end, 0x20), r)
+                success := batch_invert(success, x_n_mptr, add(mptr_end, 0x20),R)
 
                 mptr := x_n_mptr
-                let l_i_common := mulmod(x_n_minus_1, mload(add(vk_mptr, 0x120)), r)
+                let l_i_common := mulmod(x_n_minus_1, mload(add(vk_mptr, 0x120)),R)
                 for
                     { let pow_of_omega := mload(add(vk_mptr, 0x180)) }
                     lt(mptr, mptr_end)
                     { mptr := add(mptr, 0x20) }
                 {
-                    mstore(mptr, mulmod(l_i_common, mulmod(mload(mptr), pow_of_omega, r), r))
-                    pow_of_omega := mulmod(pow_of_omega, omega, r)
+                    mstore(mptr, mulmod(l_i_common, mulmod(mload(mptr), pow_of_omega,R),R))
+                    pow_of_omega := mulmod(pow_of_omega, omega,R)
                 }
 
                 let l_blind := mload(add(x_n_mptr, 0x20))
@@ -349,7 +349,7 @@ contract Halo2Verifier {
                     lt(l_i_cptr, l_i_cptr_end)
                     { l_i_cptr := add(l_i_cptr, 0x20) }
                 {
-                    l_blind := addmod(l_blind, mload(l_i_cptr), r)
+                    l_blind := addmod(l_blind, mload(l_i_cptr),R)
                 }
 
                 let instance_eval := 0
@@ -364,7 +364,7 @@ contract Halo2Verifier {
                         l_i_cptr := add(l_i_cptr, 0x20)
                     }
                 {
-                    instance_eval := addmod(instance_eval, mulmod(mload(l_i_cptr), calldataload(instance_cptr), r), r)
+                    instance_eval := addmod(instance_eval, mulmod(mload(l_i_cptr), calldataload(instance_cptr),R),R)
                 }
 
                 let x_n_minus_1_inv := mload(mptr_end)
@@ -394,151 +394,83 @@ contract Halo2Verifier {
 
                 pop(y)
 
-                let quotient_eval := mulmod(quotient_eval_numer, mload(add(theta_mptr, 0x1a0)), r)
+                let quotient_eval := mulmod(quotient_eval_numer, mload(add(theta_mptr, 0x1a0)), R)
                 mstore(add(theta_mptr, 0x240), quotient_eval)
             }
 
-            // // Compute quotient evavluation
-            // // TODO:
-            // // [X] Gate computations
-            // // [ ] Permutation computations
-            // // [ ] Lookup computations
-            // {
-            //     let quotient_eval_numer
-            //     let y := mload(add(theta_mptr, 0x60))
-            //     let gate_computations_ptr := add(vk_mptr,(add(vk_mptr, 0x380)))
-            //     let gate_computations_len := mload(gate_computations_ptr) // Remember this length represented in bytes
-            //     let gate_computations := mload(add(gate_computations_ptr, 0x20)) 
-            //     let expressions_ptr := add(vk_mptr, EXPRESSIONS_OFFSET) // TODO fill in the correct offset
-            //     let expression := 0x0 // Initialize this to 0. Will set it later in the loop
-            //     let expression_acc := 0
-            //     let free_static_memory_ptr := 0x20 // Initialize at 0x20 b/c 0x00 to store vars that need to persist across certain code blocks
-            //     let constants_ptr := add(vk_mptr, CONSTANTS_OFFSET) // TODO fill in the correct offset
-            //     // Load in the total number of code blocks from the vk constants, right after the number challenges
-            //     for { let code_block := 0 } lt(code_block, gate_computations_len) { code_block := add(code_block, 0x20) } {
-            //         let code_ptr := add(add(gate_computations, code_block), expression_acc)
-            //         // Shift the code_len by the free_static_memory_ptr
-            //         let code_len := add(mload(code_ptr), free_static_memory_ptr)
-            //         // loop through code len
-            //         for { let i := free_static_memory_ptr } lt(i, code_len) { i := add(i, 0x20) } {
-            //             /// @dev Note we can optimize the amount of space the expressions take up by packing 32/5 == 6 expressions into a single word
-            //             expression := mload(add(code_ptr, i))
-            //             expression_acc := add(expression_acc, 0x20)
-            //             // Load in the least significant byte located of the `expression` word to get the operation type
-            //             let byte := and(expression, 0xFF)
+            // Compute quotient evavluation
+            // TODO:
+            // [X] Gate computations
+            // [ ] Permutation computations
+            // [ ] Lookup computations
+            {
+                let quotient_eval_numer
+                let y := mload(add(theta_mptr, 0x60))
+                let gate_computations_len_ptr := add(vk_mptr, mload(add(vk_mptr, 0x380)))
+                let gate_computations_ptr := add(gate_computations_len_ptr, 0x20)
+                let gate_computations_len := mload(gate_computations_len_ptr) // Remember this length represented in bytes
+                let gate_computations := mload(gate_computations_ptr) 
+                let expression := 0x0 // Initialize this to 0. Will set it later in the loop. Expression represent the operation type and assocaited operand pointers.
+                let expression_acc := 0
+                let free_static_memory_ptr := 0x20 // Initialize at 0x20 b/c 0x00 to store vars that need to persist across certain code blocks
+                // Load in the total number of code blocks from the vk constants, right after the number challenges
+                for { let code_block := 0 } lt(code_block, gate_computations_len) { code_block := add(code_block, 0x20) } {
+                    let code_ptr := add(add(gate_computations_ptr, code_block), expression_acc)
+                    // Shift the code_len by the free_static_memory_ptr
+                    let code_len := add(mload(code_ptr), free_static_memory_ptr)
+                    // loop through code len
+                    for { let i := free_static_memory_ptr } lt(i, code_len) { i := add(i, 0x20) } {
+                        /// @dev Note we can optimize the amount of space the expressions take up by packing 32/5 == 6 expressions into a single word
+                        expression := mload(add(code_ptr, i))
+                        expression_acc := add(expression_acc, 0x20)
                         
-            //             // Determine which operation to peform and then store the result in the next available memory slot.
-
-            //             // 0x00 => Advice/Fixed expression
-            //             if (eq(byte, 0x00)) {
-            //                 // Load the calldata ptr from the expression, which come from the 2nd and 3rd least significant bytes.
-            //                 mstore(i,calldataload(and(shr(8, expressions), 0xFFFF)))
-            //             } 
-            //             // 0x01 => Negated expression
-            //             else if (eq(byte, 0x01)) {
-            //                 // Load the memory ptr from the expression, which come from the 2nd and 3rd least significant bytes
-            //                 mstore(i,sub(r, mload(and(shr(8, expressions), 0xFFFF))))
-            //             }
-            //             // 0x02 => Sum expression
-            //             else if (eq(byte, 0x02)) {
-            //                 // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
-            //                 // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
-            //                 mstore(i,addmod(mload(and(shr(8, expressions), 0xFFFF)),mload(and(shr(24, expressions), 0xFFFF)),r))
-            //             }
-            //             // 0x03 => Product/scalar expression
-            //             else if (eq(byte, 0x03)) {
-            //                 // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
-            //                 // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
-            //                 mstore(i,mulmod(mload(and(shr(8, expressions), 0xFFFF)),mload(and(shr(24, expressions), 0xFFFF)),r))
-            //             }
-            //         }
-            //         // at the end of each code block we update `quotient_eval_numer`
-            //         if (eq(code_block, 0x00)) {
-            //             // If this is the first code block, we set `quotient_eval_numer` to the last var in the code block
-            //             quotient_eval_numer := mload(code_len)
-            //         } else {
-            //             // Otherwise we add the last var in the code block to `quotient_eval_numer` mod r
-            //             quotient_eval_numer := addmod(quotient_eval_numer, mload(code_len), r)
-            //         }
-            //     }
-
-            //     pop(y)
-
-            //     let quotient_eval := mulmod(quotient_eval_numer, mload(add(theta_mptr, 0x1a0)), r)
-            //     mstore(add(theta_mptr, 0x240), quotient_eval)
-            //     // Check that the quotient evaluation is correct
-            //     success := and(success, eq(quotient_eval, mload(add(theta_mptr, 0x240)))
-            // }
-
-            // Compute quotient commitment
-            {
-                mstore(0x00, calldataload(mload(add(vk_mptr, 0xa0))))
-                mstore(0x20, calldataload(add(mload(add(vk_mptr, 0xa0)), 0x20)))
-                let x_n := mload(add(theta_mptr, 0x180))
-                for
-                    {
-                        let cptr := sub(mload(add(vk_mptr, 0xa0)), 0x40)
-                        let cptr_end := sub(mload(add(vk_mptr, 0xc0)), 0x40)
+                        // Load in the least significant byte of the `expression` word to get the operation type 
+                        // Then determine which operation to peform and then store the result in the next available memory slot.
+                        switch and(expression, 0xFF)
+                        // 0x00 => Advice/Fixed expression
+                        case 0x00 {
+                            // Load the calldata ptr from the expression, which come from the 2nd and 3rd least significant bytes.
+                            mstore(i,calldataload(and(shr(8, expression), 0xFFFF)))
+                        } 
+                        // 0x01 => Negated expression
+                        case 0x01 {
+                            // Load the memory ptr from the expression, which come from the 2nd and 3rd least significant bytes
+                            mstore(i,sub(R, mload(and(shr(8, expression), 0xFFFF))))
+                        }
+                        // 0x02 => Sum expression
+                        case 0x02 {
+                            // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
+                            // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
+                            mstore(i,addmod(mload(and(shr(8, expression), 0xFFFF)),mload(and(shr(24, expression), 0xFFFF)),R))
+                        }
+                        // 0x03 => Product/scalar expression
+                        case 0x03 {
+                            // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
+                            // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
+                            mstore(i,mulmod(mload(and(shr(8, expression), 0xFFFF)),mload(and(shr(24, expression), 0xFFFF)),R))
+                        }
                     }
-                    lt(cptr_end, cptr)
-                    {}
-                {
-                    success := ec_mul_acc(success, x_n)
-                    success := ec_add_acc(success, calldataload(cptr), calldataload(add(cptr, 0x20)))
-                    cptr := sub(cptr, 0x40)
+
+                    // at the end of each code block we update `quotient_eval_numer`
+
+                    // If this is the first code block, we set `quotient_eval_numer` to the last var in the code block
+                    switch eq(code_block, 0)
+                    case 1 {
+                        quotient_eval_numer := mload(sub(code_len, free_static_memory_ptr))
+                    }
+                    case 0 {
+                        // Otherwise we add the last var in the code block to `quotient_eval_numer` mod r
+                        quotient_eval_numer := addmod(mulmod(quotient_eval_numer, y, R), mload(sub(code_len, free_static_memory_ptr)), R)
+                    }
                 }
-                mstore(add(theta_mptr, 0x260), mload(0x00))
-                mstore(add(theta_mptr, 0x280), mload(0x20))
+
+                pop(y)
+
+                let quotient_eval := mulmod(quotient_eval_numer, mload(add(theta_mptr, 0x1a0)), R)
+                // mstore(add(theta_mptr, 0x240), quotient_eval)
+                // Check that the quotient evaluation is correct
+                success := and(success, eq(quotient_eval, mload(add(theta_mptr, 0x240))))
             }
-
-            // Compute pairing lhs and rhs
-            {
-                {%- for code_block in pcs_computations %}
-                {
-                    {%- for line in code_block %}
-                    {{ line }}
-                    {%- endfor %}
-                }
-                {%- endfor %}
-            }
-
-            // Random linear combine with accumulator
-            if mload(add(vk_mptr, 0x01a0)) {
-                mstore(0x00, mload(add(theta_mptr, 0x100)))
-                mstore(0x20, mload(add(theta_mptr, 0x120)))
-                mstore(0x40, mload(add(theta_mptr, 0x140)))
-                mstore(0x60, mload(add(theta_mptr, 0x160)))
-                mstore(0x80, mload(add(theta_mptr, 0x2c0)))
-                mstore(0xa0, mload(add(theta_mptr, 0x2e0)))
-                mstore(0xc0, mload(add(theta_mptr, 0x300)))
-                mstore(0xe0, mload(add(theta_mptr, 0x320)))
-                let challenge := mod(keccak256(0x00, 0x100), r)
-
-                // [pairing_lhs] += challenge * [acc_lhs]
-                success := ec_mul_acc(success, challenge)
-                success := ec_add_acc(success, mload(add(theta_mptr, 0x2c0)), mload(add(theta_mptr, 0x2e0)))
-                mstore(add(theta_mptr, 0x2c0), mload(0x00))
-                mstore(add(theta_mptr, 0x2e0), mload(0x20))
-
-                // [pairing_rhs] += challenge * [acc_rhs]
-                mstore(0x00, mload(add(theta_mptr, 0x140)))
-                mstore(0x20, mload(add(theta_mptr, 0x160)))
-                success := ec_mul_acc(success, challenge)
-                success := ec_add_acc(success, mload(add(theta_mptr, 0x300)), mload(add(theta_mptr, 0x320)))
-                mstore(add(theta_mptr, 0x300), mload(0x00))
-                mstore(add(theta_mptr, 0x320), mload(0x20))
-            }
-
-            // // Perform pairing
-            success := ec_pairing(
-                success,
-                vk_mptr,
-                mload(add(theta_mptr, 0x2c0)),
-                mload(add(theta_mptr, 0x2e0)),
-                mload(add(theta_mptr, 0x300)),
-                mload(add(theta_mptr, 0x320))
-            )
- 
 
             // Revert if anything fails
             if iszero(success) {

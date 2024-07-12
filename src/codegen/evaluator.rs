@@ -465,25 +465,25 @@ where
                 )
             },
             &|(mut acc, var)| {
-                let (lines, var) = self.init_var(format!("sub(r, {var})"), None);
+                let (lines, var) = self.init_var(format!("sub(R, {var})"), None);
                 acc.extend(lines);
                 (acc, var)
             },
             &|(mut lhs_acc, lhs_var), (rhs_acc, rhs_var)| {
-                let (lines, var) = self.init_var(format!("addmod({lhs_var}, {rhs_var}, r)"), None);
+                let (lines, var) = self.init_var(format!("addmod({lhs_var}, {rhs_var}, R)"), None);
                 lhs_acc.extend(rhs_acc);
                 lhs_acc.extend(lines);
                 (lhs_acc, var)
             },
             &|(mut lhs_acc, lhs_var), (rhs_acc, rhs_var)| {
-                let (lines, var) = self.init_var(format!("mulmod({lhs_var}, {rhs_var}, r)"), None);
+                let (lines, var) = self.init_var(format!("mulmod({lhs_var}, {rhs_var}, R)"), None);
                 lhs_acc.extend(rhs_acc);
                 lhs_acc.extend(lines);
                 (lhs_acc, var)
             },
             &|(mut acc, var), scalar| {
                 let scalar = u256_string(scalar);
-                let (lines, var) = self.init_var(format!("mulmod({var}, {scalar}, r)"), None);
+                let (lines, var) = self.init_var(format!("mulmod({var}, {scalar}, R)"), None);
                 acc.extend(lines);
                 (acc, var)
             },
@@ -616,8 +616,11 @@ where
         }
     }
 
+    // TODO: optimiize this by maintaing a cache of previous var stored in static memory and if
+    // any of the steps require the same var then just return the pointer to the var instead of encoding it again
+
     fn reset(&self) {
-        *self.static_mem_ptr.borrow_mut() = Default::default();
+        *self.static_mem_ptr.borrow_mut() = 0x20;
         *self.encoded_var_cache.borrow_mut() = Default::default();
     }
 

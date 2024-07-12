@@ -283,11 +283,10 @@ impl<'a> SolidityGenerator<'a> {
         if !separate {
             return attached_vk;
         }
-        // Pass a vk.len() to estimate_static_working_memory.
 
         let vk_mptr_mock =
             self.estimate_static_working_memory_size(&attached_vk, Ptr::calldata(0x84));
-        let data = Data::new(
+        let dummy_data = Data::new(
             &self.meta,
             &attached_vk,
             Ptr::memory(vk_mptr_mock),
@@ -310,15 +309,19 @@ impl<'a> SolidityGenerator<'a> {
             let mptr = Ptr::memory(mptr);
             vk_lookup_const_table_dummy.insert(const_expressions[idx], mptr);
         });
-        let evaluator_dummy =
-            EvaluatorVK::new(self.vk.cs(), &self.meta, &data, vk_lookup_const_table_dummy);
+        let evaluator_dummy = EvaluatorVK::new(
+            self.vk.cs(),
+            &self.meta,
+            &dummy_data,
+            vk_lookup_const_table_dummy,
+        );
 
         let instance_cptr = U256::from((self.meta.proof_len(self.scheme)) + 0xa4);
 
         // set instance_cptr it at position 7 of the constants.
         constants[7] = ("instance_cptr", instance_cptr);
 
-        let first_quotient_x_cptr = data.quotient_comm_cptr;
+        let first_quotient_x_cptr = dummy_data.quotient_comm_cptr;
 
         // set first_quotient_x_cptr at position 6 of the constants.
         constants[6] = (
@@ -364,6 +367,8 @@ impl<'a> SolidityGenerator<'a> {
                 })
                 .collect();
 
+        println!("total length: {:?}", cumulative_length);
+
         let num_advices_user_challenges_offset = (constants.len() * 0x20)
             + (fixed_comms.len() + permutation_comms.len()) * 0x40
             + (const_expressions.len() * 0x20);
@@ -393,7 +398,16 @@ impl<'a> SolidityGenerator<'a> {
             gate_computations_total_length: cumulative_length,
         };
         // Now generate the real vk_mptr with a vk that has the correct length
-        let vk_mptr = self.estimate_static_working_memory_size(&attached_vk, Ptr::calldata(0x84));
+        let vk_mptr = self.estimate_static_working_memory_size(&vk, Ptr::calldata(0x84));
+
+        // Generte the real data.
+        let data = Data::new(
+            &self.meta,
+            &vk,
+            Ptr::memory(vk_mptr),
+            Ptr::calldata(0x84),
+            true,
+        );
         // replace the mock vk_mptr with the real vk_mptr
         vk.constants[1] = ("vk_mptr", U256::from(vk_mptr));
         // replace the mock vk_len with the real vk_len
@@ -426,7 +440,7 @@ impl<'a> SolidityGenerator<'a> {
                     .iter()
                     .map(|line: &ruint::Uint<256, 4>| U256::from(*line))
                     .collect::<Vec<_>>();
-                let length = operations.len() * 0x20;
+                let length = operations.len();
                 let gate_computation = (operations, cumulative_length);
                 cumulative_length += length;
                 gate_computation
@@ -520,8 +534,8 @@ impl<'a> SolidityGenerator<'a> {
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
         let quotient_eval_numer_computations: Vec<Vec<String>> = chain![
             evaluator.gate_computations(),
-            evaluator.permutation_computations(true),
-            evaluator.lookup_computations(Some(vk_lookup_const_table), true)
+            // evaluator.permutation_computations(true),
+            // evaluator.lookup_computations(Some(vk_lookup_const_table), true)
         ]
         .enumerate()
         .map(|(idx, (mut lines, var))| {
@@ -529,7 +543,7 @@ impl<'a> SolidityGenerator<'a> {
                 format!("quotient_eval_numer := {var}")
             } else {
                 format!(
-                    "quotient_eval_numer := addmod(mulmod(quotient_eval_numer, y, r), {var}, r)"
+                    "quotient_eval_numer := addmod(mulmod(quotient_eval_numer, y, R), {var}, R)"
                 )
             };
             lines.push(line);

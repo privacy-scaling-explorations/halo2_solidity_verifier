@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 
 contract Halo2Verifier {
     uint256 internal constant    DELTA = 4131629893567559867359510883348571134090853742863529169391034518566172092834;
+    uint256 internal constant        R = 21888242871839275222246405745257275088548364400416034343698204186575808495617; 
     uint256 internal constant    PROOF_LEN_CPTR = {{ proof_len_cptr }};
     uint256 internal constant        PROOF_CPTR = {{ proof_cptr }};
     uint256 internal constant NUM_INSTANCE_CPTR = {{ proof_cptr + (proof_len / 32) }};
@@ -213,7 +214,7 @@ contract Halo2Verifier {
 
             // Modulus
             let q := 21888242871839275222246405745257275088696311157297823662689037894645226208583 // BN254 base field
-            let r := 21888242871839275222246405745257275088548364400416034343698204186575808495617 // BN254 scalar field
+            let r := 21888242871839275222246405745257275088548364400416034343698204186575808495617 // BN254 scalar field TODO: rmv this and replace with constant R
 
             // Initialize success as true
             let success := true
