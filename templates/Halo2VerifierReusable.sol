@@ -60,7 +60,7 @@ contract Halo2Verifier {
 
             // Batch invert values in memory[mptr_start..mptr_end] in place.
             // Return updated (success).
-            function batch_invert(success, mptr_start, mptr_end, r) -> ret {
+            function batch_invert(success, mptr_start, mptr_end) -> ret {
                 let gp_mptr := mptr_end
                 let gp := mload(mptr_start)
                 let mptr := add(mptr_start, 0x20)
@@ -69,19 +69,19 @@ contract Halo2Verifier {
                     lt(mptr, sub(mptr_end, 0x20))
                     {}
                 {
-                    gp := mulmod(gp, mload(mptr), r)
+                    gp := mulmod(gp, mload(mptr), R)
                     mstore(gp_mptr, gp)
                     mptr := add(mptr, 0x20)
                     gp_mptr := add(gp_mptr, 0x20)
                 }
-                gp := mulmod(gp, mload(mptr), r)
+                gp := mulmod(gp, mload(mptr), R)
 
                 mstore(gp_mptr, 0x20)
                 mstore(add(gp_mptr, 0x20), 0x20)
                 mstore(add(gp_mptr, 0x40), 0x20)
                 mstore(add(gp_mptr, 0x60), gp)
-                mstore(add(gp_mptr, 0x80), sub(r, 2))
-                mstore(add(gp_mptr, 0xa0), r)
+                mstore(add(gp_mptr, 0x80), sub(R, 2))
+                mstore(add(gp_mptr, 0xa0), R)
                 ret := and(success, staticcall(gas(), 0x05, gp_mptr, 0xc0, gp_mptr, 0x20))
                 let all_inv := mload(gp_mptr)
 
@@ -93,14 +93,14 @@ contract Halo2Verifier {
                     lt(second_mptr, mptr)
                     {}
                 {
-                    let inv := mulmod(all_inv, mload(gp_mptr), r)
-                    all_inv := mulmod(all_inv, mload(mptr), r)
+                    let inv := mulmod(all_inv, mload(gp_mptr), R)
+                    all_inv := mulmod(all_inv, mload(mptr), R)
                     mstore(mptr, inv)
                     mptr := sub(mptr, 0x20)
                     gp_mptr := sub(gp_mptr, 0x20)
                 }
-                let inv_first := mulmod(all_inv, mload(second_mptr), r)
-                let inv_second := mulmod(all_inv, mload(first_mptr), r)
+                let inv_first := mulmod(all_inv, mload(second_mptr), R)
+                let inv_second := mulmod(all_inv, mload(first_mptr), R)
                 mstore(first_mptr, inv_first)
                 mstore(second_mptr, inv_second)
             }
@@ -329,7 +329,7 @@ contract Halo2Verifier {
                 }
                 let x_n_minus_1 := addmod(x_n, sub(R, 1),R)
                 mstore(mptr_end, x_n_minus_1)
-                success := batch_invert(success, x_n_mptr, add(mptr_end, 0x20),R)
+                success := batch_invert(success, x_n_mptr, add(mptr_end, 0x20))
 
                 mptr := x_n_mptr
                 let l_i_common := mulmod(x_n_minus_1, mload(add(vk_mptr, 0x120)),R)
@@ -379,32 +379,15 @@ contract Halo2Verifier {
                 mstore(add(theta_mptr, 0x220), instance_eval)
             }
 
-            // Compute quotient evavluation
-            {
-                let quotient_eval_numer
-                let y := mload(add(theta_mptr, 0x60))
-
-                {%- for code_block in quotient_eval_numer_computations %}
-                {
-                    {%- for line in code_block %}
-                    {{ line }}
-                    {%- endfor %}
-                }
-                {%- endfor %}
-
-                pop(y)
-
-                let quotient_eval := mulmod(quotient_eval_numer, mload(add(theta_mptr, 0x1a0)), R)
-                mstore(add(theta_mptr, 0x240), quotient_eval)
-            }
 
             // Compute quotient evavluation
             // TODO:
             // [X] Gate computations
             // [ ] Permutation computations
             // [ ] Lookup computations
+            let quotient_eval_numer
             {
-                let quotient_eval_numer
+                // let quotient_eval_numer
                 let y := mload(add(theta_mptr, 0x60))
                 let gate_computations_len_ptr := add(vk_mptr, mload(add(vk_mptr, 0x380)))
                 let gate_computations_ptr := add(gate_computations_len_ptr, 0x20)
@@ -464,13 +447,88 @@ contract Halo2Verifier {
                     }
                 }
 
+                {%- for code_block in quotient_eval_numer_computations %}
+                {
+                    {%- for line in code_block %}
+                    {{ line }}
+                    {%- endfor %}
+                }
+                {%- endfor %}
+
                 pop(y)
 
                 let quotient_eval := mulmod(quotient_eval_numer, mload(add(theta_mptr, 0x1a0)), R)
-                // mstore(add(theta_mptr, 0x240), quotient_eval)
-                // Check that the quotient evaluation is correct
-                success := and(success, eq(quotient_eval, mload(add(theta_mptr, 0x240))))
+                mstore(add(theta_mptr, 0x240), quotient_eval)
             }
+
+            // Compute quotient commitment
+            {
+                mstore(0x00, calldataload(mload(add(vk_mptr, 0xa0))))
+                mstore(0x20, calldataload(add(mload(add(vk_mptr, 0xa0)), 0x20)))
+                let x_n := mload(add(theta_mptr, 0x180))
+                for
+                    {
+                        let cptr := sub(mload(add(vk_mptr, 0xa0)), 0x40)
+                        let cptr_end := sub(mload(add(vk_mptr, 0xc0)), 0x40)
+                    }
+                    lt(cptr_end, cptr)
+                    {}
+                {
+                    success := ec_mul_acc(success, x_n)
+                    success := ec_add_acc(success, calldataload(cptr), calldataload(add(cptr, 0x20)))
+                    cptr := sub(cptr, 0x40)
+                }
+                mstore(add(theta_mptr, 0x260), mload(0x00))
+                mstore(add(theta_mptr, 0x280), mload(0x20))
+            }
+
+            // Compute pairing lhs and rhs
+            {
+                {%- for code_block in pcs_computations %}
+                {
+                    {%- for line in code_block %}
+                    {{ line }}
+                    {%- endfor %}
+                }
+                {%- endfor %}
+            }
+
+            // Random linear combine with accumulator
+            if mload(add(vk_mptr, 0x01a0)) {
+                mstore(0x00, mload(add(theta_mptr, 0x100)))
+                mstore(0x20, mload(add(theta_mptr, 0x120)))
+                mstore(0x40, mload(add(theta_mptr, 0x140)))
+                mstore(0x60, mload(add(theta_mptr, 0x160)))
+                mstore(0x80, mload(add(theta_mptr, 0x2c0)))
+                mstore(0xa0, mload(add(theta_mptr, 0x2e0)))
+                mstore(0xc0, mload(add(theta_mptr, 0x300)))
+                mstore(0xe0, mload(add(theta_mptr, 0x320)))
+                let challenge := mod(keccak256(0x00, 0x100), R)
+
+                // [pairing_lhs] += challenge * [acc_lhs]
+                success := ec_mul_acc(success, challenge)
+                success := ec_add_acc(success, mload(add(theta_mptr, 0x2c0)), mload(add(theta_mptr, 0x2e0)))
+                mstore(add(theta_mptr, 0x2c0), mload(0x00))
+                mstore(add(theta_mptr, 0x2e0), mload(0x20))
+
+                // [pairing_rhs] += challenge * [acc_rhs]
+                mstore(0x00, mload(add(theta_mptr, 0x140)))
+                mstore(0x20, mload(add(theta_mptr, 0x160)))
+                success := ec_mul_acc(success, challenge)
+                success := ec_add_acc(success, mload(add(theta_mptr, 0x300)), mload(add(theta_mptr, 0x320)))
+                mstore(add(theta_mptr, 0x300), mload(0x00))
+                mstore(add(theta_mptr, 0x320), mload(0x20))
+            }
+
+            // Perform pairing
+            success := ec_pairing(
+                success,
+                vk_mptr,
+                mload(add(theta_mptr, 0x2c0)),
+                mload(add(theta_mptr, 0x2e0)),
+                mload(add(theta_mptr, 0x300)),
+                mload(add(theta_mptr, 0x320))
+            )
 
             // Revert if anything fails
             if iszero(success) {

@@ -272,7 +272,7 @@ pub(crate) fn bdfg21_computations(
             format!("let x := mload({})", x).as_str(),
             format!("let omega := mload({})", omega).as_str(),
             format!("let omega_inv := mload({})", omega_inv).as_str(),
-            "let x_pow_of_omega := mulmod(x, omega, r)"
+            "let x_pow_of_omega := mulmod(x, omega, R)"
         ]
         .map(str::to_string),
         (1..=max_rot).flat_map(|rot| {
@@ -281,12 +281,12 @@ pub(crate) fn bdfg21_computations(
                     .get(&rot)
                     .map(|point| format!("mstore({}, x_pow_of_omega)", point.ptr())),
                 (rot != max_rot)
-                    .then(|| { "x_pow_of_omega := mulmod(x_pow_of_omega, omega, r)".to_string() })
+                    .then(|| { "x_pow_of_omega := mulmod(x_pow_of_omega, omega, R)".to_string() })
             ]
         }),
         [
             format!("mstore({}, x)", points[&0].ptr()),
-            format!("x_pow_of_omega := mulmod(x, omega_inv, r)")
+            format!("x_pow_of_omega := mulmod(x, omega_inv, R)")
         ],
         (min_rot..0).rev().flat_map(|rot| {
             chain![
@@ -294,7 +294,7 @@ pub(crate) fn bdfg21_computations(
                     .get(&rot)
                     .map(|point| format!("mstore({}, x_pow_of_omega)", point.ptr())),
                 (rot != min_rot).then(|| {
-                    "x_pow_of_omega := mulmod(x_pow_of_omega, omega_inv, r)".to_string()
+                    "x_pow_of_omega := mulmod(x_pow_of_omega, omega_inv, R)".to_string()
                 })
             ]
         })
@@ -318,7 +318,7 @@ pub(crate) fn bdfg21_computations(
                     "point_mptr := add(point_mptr, 0x20)",
                 ]
                 .map(str::to_string),
-                ["mstore(mptr, addmod(mu, sub(r, mload(point_mptr)), r))".to_string()],
+                ["mstore(mptr, addmod(mu, sub(R, mload(point_mptr)), R))".to_string()],
             )
         },
         ["let s".to_string()],
@@ -328,7 +328,7 @@ pub(crate) fn bdfg21_computations(
                 mu_minus_points[sets[0].rots().first().unwrap()]
             )],
             chain![sets[0].rots().iter().skip(1)]
-                .map(|rot| { format!("s := mulmod(s, {}, r)", mu_minus_points[rot]) }),
+                .map(|rot| { format!("s := mulmod(s, {}, R)", mu_minus_points[rot]) }),
             [format!("mstore({}, s)", vanishing_0.ptr())],
         ],
         ["let diff".to_string()],
@@ -339,7 +339,7 @@ pub(crate) fn bdfg21_computations(
                     .map(|rot| format!("diff := {}", mu_minus_points[rot]))
                     .unwrap_or_else(|| "diff := 1".to_string())],
                 chain![set.diffs().iter().skip(1)]
-                    .map(|rot| { format!("diff := mulmod(diff, {}, r)", mu_minus_points[rot]) }),
+                    .map(|rot| { format!("diff := mulmod(diff, {}, R)", mu_minus_points[rot]) }),
                 [format!("mstore({}, diff)", diff.ptr())],
                 (set_idx == 0).then(|| format!("mstore({}, diff)", diff_0.ptr())),
             ]
@@ -373,15 +373,15 @@ pub(crate) fn bdfg21_computations(
                         [coeff_points
                             .first()
                             .map(|(point_i, point_j)| {
-                                format!("coeff := addmod({point_i}, sub(r, {point_j}), r)")
+                                format!("coeff := addmod({point_i}, sub(R, {point_j}), R)")
                             })
                             .unwrap_or_else(|| { "coeff := 1".to_string() })],
                         coeff_points.iter().skip(1).map(|(point_i, point_j)| {
-                            let item = format!("addmod({point_i}, sub(r, {point_j}), r)");
-                            format!("coeff := mulmod(coeff, {item}, r)")
+                            let item = format!("addmod({point_i}, sub(R, {point_j}), R)");
+                            format!("coeff := mulmod(coeff, {item}, R)")
                         }),
                         [
-                            format!("coeff := mulmod(coeff, {}, r)", mu_minus_points[rot_i]),
+                            format!("coeff := mulmod(coeff, {}, R)", mu_minus_points[rot_i]),
                             format!("mstore({}, coeff)", coeff.ptr())
                         ],
                     ]
@@ -393,7 +393,7 @@ pub(crate) fn bdfg21_computations(
 
     let normalized_coeff_computations = chain![
         [
-            format!("success := batch_invert(success, 0, {first_batch_invert_end}, r)"),
+            format!("success := batch_invert(success, 0, {first_batch_invert_end})"),
             format!("let diff_0_inv := {diff_0}"),
             format!("mstore({}, diff_0_inv)", diffs[0].ptr()),
         ],
@@ -404,7 +404,7 @@ pub(crate) fn bdfg21_computations(
             ],
             "lt(mptr, mptr_end)",
             ["mptr := add(mptr, 0x20)".to_string()],
-            ["mstore(mptr, mulmod(mload(mptr), diff_0_inv, r))".to_string()],
+            ["mstore(mptr, mulmod(mload(mptr), diff_0_inv, R))".to_string()],
         ),
     ]
     .collect_vec();
@@ -445,17 +445,17 @@ pub(crate) fn bdfg21_computations(
                                 chain![evals.iter().enumerate()]
                                     .flat_map(|(eval_idx, eval)| {
                                         let is_first_eval = group_idx == 0 && eval_idx == 0;
-                                        let item = format!("mulmod(coeff, {eval}, r)");
+                                        let item = format!("mulmod(coeff, {eval}, R)");
                                         chain![
                                             (!is_first_eval).then(|| format!(
-                                                "r_eval := mulmod(r_eval, zeta, r)"
+                                                "r_eval := mulmod(r_eval, zeta, R)"
                                             )),
-                                            [format!("r_eval := addmod(r_eval, {item}, r)")],
+                                            [format!("r_eval := addmod(r_eval, {item}, R)")],
                                         ]
                                     })
                                     .collect_vec()
                             } else {
-                                let item = "mulmod(coeff, calldataload(mptr), r)";
+                                let item = "mulmod(coeff, calldataload(mptr), R)";
                                 for_loop(
                                     [
                                         format!("let mptr := {}", evals[0].ptr()),
@@ -464,7 +464,7 @@ pub(crate) fn bdfg21_computations(
                                     "lt(mptr_end, mptr)".to_string(),
                                     ["mptr := sub(mptr, 0x20)".to_string()],
                                     [format!(
-                                        "r_eval := addmod(mulmod(r_eval, zeta, r), {item}, r)"
+                                        "r_eval := addmod(mulmod(r_eval, zeta, R), {item}, R)"
                                     )],
                                 )
                             }
@@ -475,15 +475,15 @@ pub(crate) fn bdfg21_computations(
                         .flat_map(|(idx, evals)| {
                             chain![
                                 izip!(evals, coeffs).map(|(eval, coeff)| {
-                                    let item = format!("mulmod({coeff}, {eval}, r)");
-                                    format!("r_eval := addmod(r_eval, {item}, r)")
+                                    let item = format!("mulmod({coeff}, {eval}, R)");
+                                    format!("r_eval := addmod(r_eval, {item}, R)")
                                 }),
-                                (idx != 0).then(|| format!("r_eval := mulmod(r_eval, zeta, r)")),
+                                (idx != 0).then(|| format!("r_eval := mulmod(r_eval, zeta, R)")),
                             ]
                         })
                         .collect_vec()
                 },
-                (set_idx != 0).then(|| format!("r_eval := mulmod(r_eval, {set_coeff}, r)")),
+                (set_idx != 0).then(|| format!("r_eval := mulmod(r_eval, {set_coeff}, R)")),
                 [format!("mstore({}, r_eval)", r_eval.ptr())],
             ]
             .collect_vec()
@@ -496,7 +496,7 @@ pub(crate) fn bdfg21_computations(
             [format!("let sum := {coeff_0}")],
             rest_coeffs
                 .iter()
-                .map(|coeff_mptr| format!("sum := addmod(sum, {coeff_mptr}, r)")),
+                .map(|coeff_mptr| format!("sum := addmod(sum, {coeff_mptr}, R)")),
             [format!("mstore({}, sum)", sum.ptr())],
         ]
         .collect_vec()
@@ -521,9 +521,9 @@ pub(crate) fn bdfg21_computations(
             ["mstore(mptr, mload(sum_mptr))".to_string()],
         ),
         [
-            format!("success := batch_invert(success, 0, {second_batch_invert_end}, r)"),
+            format!("success := batch_invert(success, 0, {second_batch_invert_end})"),
             format!(
-                "let r_eval := mulmod(mload({}), {}, r)",
+                "let r_eval := mulmod(mload({}), {}, R)",
                 second_batch_invert_end - 1,
                 r_evals.last().unwrap()
             )
@@ -541,8 +541,8 @@ pub(crate) fn bdfg21_computations(
             ]
             .map(str::to_string),
             [
-                format!("r_eval := mulmod(r_eval, mload({nu}), r)").as_str(),
-                "r_eval := addmod(r_eval, mulmod(mload(sum_inv_mptr), mload(r_eval_mptr), r), r)"
+                format!("r_eval := mulmod(r_eval, mload({nu}), R)").as_str(),
+                "r_eval := addmod(r_eval, mulmod(mload(sum_inv_mptr), mload(r_eval_mptr), R), R)"
             ]
             .map(str::to_string),
         ),
@@ -625,13 +625,13 @@ pub(crate) fn bdfg21_computations(
                 }),
                 (!is_first_set)
                     .then(|| {
-                        let scalar = format!("mulmod(nu, {set_coeff}, r)");
+                        let scalar = format!("mulmod(nu, {set_coeff}, R)");
                         chain![
                             [
                                 format!("success := ec_mul_tmp(success, {scalar})"),
                                 format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
                             ],
-                            (!is_last_set).then(|| format!("nu := mulmod(nu, mload({nu}), r)"))
+                            (!is_last_set).then(|| format!("nu := mulmod(nu, mload({nu}), R)"))
                         ]
                     })
                     .into_iter()
@@ -642,11 +642,11 @@ pub(crate) fn bdfg21_computations(
         [
             format!("mstore(0x80, mload({}))", g1_x),
             format!("mstore(0xa0, mload({}))", g1_y),
-            format!("success := ec_mul_tmp(success, sub(r, mload({r_eval})))"),
+            format!("success := ec_mul_tmp(success, sub(R, mload({r_eval})))"),
             format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
             format!("mstore(0x80, {})", w.x()),
             format!("mstore(0xa0, {})", w.y()),
-            format!("success := ec_mul_tmp(success, sub(r, {vanishing_0}))"),
+            format!("success := ec_mul_tmp(success, sub(R, {vanishing_0}))"),
             format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
             format!("mstore(0x80, {})", w_prime.x()),
             format!("mstore(0xa0, {})", w_prime.y()),

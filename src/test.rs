@@ -57,7 +57,7 @@ fn run_render<C: halo2::TestCircuit<Fr>>() {
     let verifier_creation_code = compile_solidity(verifier_solidity);
     let verifier_creation_code_size = verifier_creation_code.len();
 
-    let mut evm = Evm::default();
+    let mut evm = Evm::unlimited();
     let verifier_address = evm.create(verifier_creation_code);
     let verifier_runtime_code_size = evm.code_size(verifier_address);
 
@@ -80,7 +80,7 @@ fn run_render_separately<C: halo2::TestCircuit<Fr>>() {
     let verifier_creation_code = compile_solidity(&verifier_solidity);
     let verifier_creation_code_size = verifier_creation_code.len();
 
-    let mut evm = Evm::default();
+    let mut evm = Evm::unlimited();
     let verifier_address = evm.create(verifier_creation_code);
     let verifier_runtime_code_size = evm.code_size(verifier_address);
 

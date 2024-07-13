@@ -50,7 +50,9 @@ pub fn encode_calldata(
 pub(crate) mod test {
     pub use revm;
     use revm::{
-        primitives::{Address, CreateScheme, ExecutionResult, Output, TransactTo, TxEnv},
+        primitives::{
+            Address, CfgEnv, CreateScheme, Env, ExecutionResult, Output, TransactTo, TxEnv,
+        },
         InMemoryDB, EVM,
     };
     use std::{
@@ -143,6 +145,21 @@ pub(crate) mod test {
                 .as_ref()
                 .unwrap()
                 .len()
+        }
+
+        /// Return a version of the evm that allows for unlimited deployments sizes.
+        pub fn unlimited() -> Self {
+            let mut cfg: CfgEnv = Default::default();
+            cfg.limit_contract_code_size = Some(usize::MAX);
+            Self {
+                evm: EVM {
+                    env: Env {
+                        cfg,
+                        ..Default::default()
+                    },
+                    db: Some(Default::default()),
+                },
+            }
         }
 
         /// Apply create transaction with given `bytecode` as creation bytecode.

@@ -119,7 +119,7 @@ contract Halo2Verifier {
 
             // Batch invert values in memory[mptr_start..mptr_end] in place.
             // Return updated (success).
-            function batch_invert(success, mptr_start, mptr_end, r) -> ret {
+            function batch_invert(success, mptr_start, mptr_end) -> ret {
                 let gp_mptr := mptr_end
                 let gp := mload(mptr_start)
                 let mptr := add(mptr_start, 0x20)
@@ -128,19 +128,19 @@ contract Halo2Verifier {
                     lt(mptr, sub(mptr_end, 0x20))
                     {}
                 {
-                    gp := mulmod(gp, mload(mptr), r)
+                    gp := mulmod(gp, mload(mptr), R)
                     mstore(gp_mptr, gp)
                     mptr := add(mptr, 0x20)
                     gp_mptr := add(gp_mptr, 0x20)
                 }
-                gp := mulmod(gp, mload(mptr), r)
+                gp := mulmod(gp, mload(mptr), R)
 
                 mstore(gp_mptr, 0x20)
                 mstore(add(gp_mptr, 0x20), 0x20)
                 mstore(add(gp_mptr, 0x40), 0x20)
                 mstore(add(gp_mptr, 0x60), gp)
-                mstore(add(gp_mptr, 0x80), sub(r, 2))
-                mstore(add(gp_mptr, 0xa0), r)
+                mstore(add(gp_mptr, 0x80), sub(R, 2))
+                mstore(add(gp_mptr, 0xa0), R)
                 ret := and(success, staticcall(gas(), 0x05, gp_mptr, 0xc0, gp_mptr, 0x20))
                 let all_inv := mload(gp_mptr)
 
@@ -152,14 +152,14 @@ contract Halo2Verifier {
                     lt(second_mptr, mptr)
                     {}
                 {
-                    let inv := mulmod(all_inv, mload(gp_mptr), r)
-                    all_inv := mulmod(all_inv, mload(mptr), r)
+                    let inv := mulmod(all_inv, mload(gp_mptr), R)
+                    all_inv := mulmod(all_inv, mload(mptr), R)
                     mstore(mptr, inv)
                     mptr := sub(mptr, 0x20)
                     gp_mptr := sub(gp_mptr, 0x20)
                 }
-                let inv_first := mulmod(all_inv, mload(second_mptr), r)
-                let inv_second := mulmod(all_inv, mload(first_mptr), r)
+                let inv_first := mulmod(all_inv, mload(second_mptr), R)
+                let inv_second := mulmod(all_inv, mload(first_mptr), R)
                 mstore(first_mptr, inv_first)
                 mstore(second_mptr, inv_second)
             }
@@ -389,7 +389,7 @@ contract Halo2Verifier {
                 }
                 let x_n_minus_1 := addmod(x_n, sub(r, 1), r)
                 mstore(mptr_end, x_n_minus_1)
-                success := batch_invert(success, X_N_MPTR, add(mptr_end, 0x20), r)
+                success := batch_invert(success, X_N_MPTR, add(mptr_end, 0x20))
 
                 mptr := X_N_MPTR
                 let l_i_common := mulmod(x_n_minus_1, mload(N_INV_MPTR), r)

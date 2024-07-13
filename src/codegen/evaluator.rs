@@ -65,20 +65,20 @@ where
             data.permutation_z_evals.first().map(|(z, _, _)| {
                 vec![
                     format!("let l_0 := mload({l_0})"),
-                    format!("let eval := addmod(l_0, sub(r, mulmod(l_0, {z}, r)), r)"),
+                    format!("let eval := addmod(l_0, sub(R, mulmod(l_0, {z}, R)), R)"),
                 ]
             }),
             data.permutation_z_evals.last().map(|(z, _, _)| {
-                let item = "addmod(mulmod(perm_z_last, perm_z_last, r), sub(r, perm_z_last), r)";
+                let item = "addmod(mulmod(perm_z_last, perm_z_last, R), sub(R, perm_z_last), R)";
                 vec![
                     format!("let perm_z_last := {z}"),
-                    format!("let eval := mulmod(mload({l_last}), {item}, r)"),
+                    format!("let eval := mulmod(mload({l_last}), {item}, R)"),
                 ]
             }),
             data.permutation_z_evals.iter().tuple_windows().map(
                 |((_, _, z_i_last), (z_j, _, _))| {
-                    let item = format!("addmod({z_j}, sub(r, {z_i_last}), r)");
-                    vec![format!("let eval := mulmod(mload({l_0}), {item}, r)")]
+                    let item = format!("addmod({z_j}, sub(R, {z_i_last}), R)");
+                    vec![format!("let eval := mulmod(mload({l_0}), {item}, R)")]
                 }
             ),
             izip!(
@@ -98,28 +98,28 @@ where
                     columns.iter().flat_map(|column| {
                         let perm_eval = &data.permutation_evals[column];
                         let eval = self.eval(*column.column_type(), column.index(), 0);
-                        let item = format!("mulmod(beta, {perm_eval}, r)");
+                        let item = format!("mulmod(beta, {perm_eval}, R)");
                         [format!(
-                            "lhs := mulmod(lhs, addmod(addmod({eval}, {item}, r), gamma, r), r)"
+                            "lhs := mulmod(lhs, addmod(addmod({eval}, {item}, R), gamma, R), R)"
                         )]
                     }),
                     (chunk_idx == 0)
-                        .then(|| format!("mstore(0x00, mulmod(beta, mload({}), r))", x_mptr)),
+                        .then(|| format!("mstore(0x00, mulmod(beta, mload({}), R))", x_mptr)),
                     columns.iter().enumerate().flat_map(|(idx, column)| {
                         let eval = self.eval(*column.column_type(), column.index(), 0);
-                        let item = format!("addmod(addmod({eval}, mload(0x00), r), gamma, r)");
+                        let item = format!("addmod(addmod({eval}, mload(0x00), R), gamma, R)");
                         chain![
-                            [format!("rhs := mulmod(rhs, {item}, r)")],
+                            [format!("rhs := mulmod(rhs, {item}, R)")],
                             (!(chunk_idx == last_chunk_idx && idx == last_column_idx))
-                                .then(|| "mstore(0x00, mulmod(mload(0x00), DELTA, r))".to_string()),
+                                .then(|| "mstore(0x00, mulmod(mload(0x00), DELTA, R))".to_string()),
                         ]
                     }),
                     {
-                        let item = format!("addmod(mload({l_last}), mload({l_blind}), r)");
-                        let item = format!("sub(r, mulmod(left_sub_right, {item}, r))");
+                        let item = format!("addmod(mload({l_last}), mload({l_blind}), R)");
+                        let item = format!("sub(R, mulmod(left_sub_right, {item}, R))");
                         [
-                            format!("let left_sub_right := addmod(lhs, sub(r, rhs), r)"),
-                            format!("let eval := addmod(left_sub_right, {item}, r)"),
+                            format!("let left_sub_right := addmod(lhs, sub(R, rhs), R)"),
+                            format!("let eval := addmod(left_sub_right, {item}, R)"),
                         ]
                     }
                 ]
@@ -193,11 +193,11 @@ where
                 [
                     vec![
                         format!("let l_0 := mload({l_0})"),
-                        format!("let eval := mulmod(l_0, {phi}, r)"),
+                        format!("let eval := mulmod(l_0, {phi}, R)"),
                     ],
                     vec![
                         format!("let l_last := mload({l_last})"),
-                        format!("let eval := mulmod(l_last, {phi}, r)"),
+                        format!("let eval := mulmod(l_last, {phi}, R)"),
                     ],
                     chain![
                         [
@@ -211,9 +211,9 @@ where
                             table_lines,
                             [format!("table := {table_0}")],
                             rest_tables.iter().map(|table| format!(
-                                "table := addmod(mulmod(table, theta, r), {table}, r)"
+                                "table := addmod(mulmod(table, theta, R), {table}, R)"
                             )),
-                            [format!("table := addmod(table, beta, r)")],
+                            [format!("table := addmod(table, beta, R)")],
                         ]),
                         // TODO: break this into it's own function on the solidity side of things,
                         // calling it within a for loop.
@@ -256,9 +256,9 @@ where
                                     input_lines,
                                     [format!("{ident} := {input_0}")],
                                     rest_inputs.iter().map(|input| format!(
-                                        "{ident} := addmod(mulmod({ident}, theta, r), {input}, r)"
+                                        "{ident} := addmod(mulmod({ident}, theta, R), {input}, R)"
                                     )),
-                                    [format!("{ident} := addmod({ident}, beta, r)")],
+                                    [format!("{ident} := addmod({ident}, beta, R)")],
                                 ]),
                             ]
                         }),
@@ -277,10 +277,10 @@ where
                                 code_block::<1, false>(chain![
                                     [format!("let tmp := {ident_0}")],
                                     chain![rest_idents]
-                                        .map(|ident| format!("tmp := mulmod(tmp, {ident}, r)")),
-                                    [format!("rhs := addmod(rhs, tmp, r)"),],
+                                        .map(|ident| format!("tmp := mulmod(tmp, {ident}, R)")),
+                                    [format!("rhs := addmod(rhs, tmp, R)"),],
                                     (i == num_inputs - 1)
-                                        .then(|| format!("rhs := mulmod(rhs, table, r)")),
+                                        .then(|| format!("rhs := mulmod(rhs, table, R)")),
                                 ])
                             }
                         }),
@@ -288,21 +288,21 @@ where
                         code_block::<1, false>(chain![
                             [format!("let tmp := input_0")],
                             (1..num_inputs)
-                                .map(|idx| format!("tmp := mulmod(tmp, input_{idx}, r)")),
+                                .map(|idx| format!("tmp := mulmod(tmp, input_{idx}, R)")),
                             [
-                                format!("rhs := addmod(rhs, sub(r, mulmod({m}, tmp, r)), r)"),
+                                format!("rhs := addmod(rhs, sub(R, mulmod({m}, tmp, R)), R)"),
                                 {
-                                    let item = format!("addmod({phi_next}, sub(r, {phi}), r)");
-                                    format!("lhs := mulmod(mulmod(table, tmp, r), {item}, r)")
+                                    let item = format!("addmod({phi_next}, sub(R, {phi}), R)");
+                                    format!("lhs := mulmod(mulmod(table, tmp, R), {item}, R)")
                                 },
                             ],
                         ]),
                         {
                             let l_inactive =
-                                format!("addmod(mload({l_blind}), mload({l_last}), r)");
-                            let l_active = format!("addmod(1, sub(r, {l_inactive}), r)");
+                                format!("addmod(mload({l_blind}), mload({l_last}), R)");
+                            let l_active = format!("addmod(1, sub(R, {l_inactive}), R)");
                             [format!(
-                                "let eval := mulmod({l_active}, addmod(lhs, sub(r, rhs), r), r)"
+                                "let eval := mulmod({l_active}, addmod(lhs, sub(R, rhs), R), R)"
                             )]
                         },
                     ]

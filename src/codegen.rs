@@ -367,8 +367,6 @@ impl<'a> SolidityGenerator<'a> {
                 })
                 .collect();
 
-        println!("total length: {:?}", cumulative_length);
-
         let num_advices_user_challenges_offset = (constants.len() * 0x20)
             + (fixed_comms.len() + permutation_comms.len()) * 0x40
             + (const_expressions.len() * 0x20);
@@ -533,13 +531,13 @@ impl<'a> SolidityGenerator<'a> {
 
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
         let quotient_eval_numer_computations: Vec<Vec<String>> = chain![
-            evaluator.gate_computations(),
-            // evaluator.permutation_computations(true),
-            // evaluator.lookup_computations(Some(vk_lookup_const_table), true)
+            // evaluator.gate_computations(),
+            evaluator.permutation_computations(true),
+            evaluator.lookup_computations(Some(vk_lookup_const_table), true)
         ]
         .enumerate()
         .map(|(idx, (mut lines, var))| {
-            let line = if idx == 0 {
+            let line = if idx == usize::MAX {
                 format!("quotient_eval_numer := {var}")
             } else {
                 format!(
