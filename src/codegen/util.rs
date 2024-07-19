@@ -403,7 +403,8 @@ impl Data {
             + vk.const_expressions.len()
             + (2 * vk.num_advices_user_challenges.len() + 1)
             + (vk.gate_computations.len() + 1)
-            + (vk.gate_computations_total_length);
+            + (vk.gate_computations_total_length)
+            + (vk.permutation_computations.len());
         let theta_mptr = challenge_mptr + meta.challenge_indices.len();
 
         let advice_comm_start = proof_cptr;
@@ -613,7 +614,7 @@ impl Data {
             Word::range(permutation_eval_cptr)
         )
         .collect();
-        let permutation_z_evals = Word::range(permutation_z_eval_cptr)
+        let permutation_z_evals: Vec<(Word, Word, Word)> = Word::range(permutation_z_eval_cptr)
             .take(3 * meta.num_permutation_zs)
             .tuples()
             .collect_vec();

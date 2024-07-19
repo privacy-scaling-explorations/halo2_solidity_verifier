@@ -13,7 +13,7 @@ use regex::Regex;
 use ruint::aliases::U256;
 use std::{cell::RefCell, cmp::Ordering, collections::HashMap, iter};
 
-use super::util::{get_memory_ptr, Ptr};
+use super::util::{get_memory_ptr, Ptr, Word};
 
 #[derive(Debug)]
 pub(crate) struct Evaluator<'a, F: PrimeField> {
@@ -536,6 +536,39 @@ pub enum OperandMem {
     StaticMemory,
 }
 
+// Holds the encoded data stored in the separate VK
+// needed to perform the permutation computations of
+// the quotient evaluation portion of the reusable verifier.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PermutationDataEncoded {
+    pub(crate) z_evals_last_idx: U256,
+    pub(crate) chunk_offset: U256,
+    pub(crate) permutation_z_evals: Vec<U256>,
+    pub(crate) column_evals: Vec<Vec<U256>>,
+}
+
+impl Default for PermutationDataEncoded {
+    fn default() -> Self {
+        PermutationDataEncoded {
+            z_evals_last_idx: U256::from(0),
+            chunk_offset: U256::from(0),
+            permutation_z_evals: Vec::new(),
+            column_evals: Vec::new(),
+        }
+    }
+}
+
+impl PermutationDataEncoded {
+    pub fn len(&self) -> usize {
+        if self == &Self::default() {
+            0
+        } else {
+            3 + self.permutation_z_evals.len()
+                + self.column_evals.iter().map(Vec::len).sum::<usize>()
+        }
+    }
+}
+
 impl<'a, F> EvaluatorVK<'a, F>
 where
     F: PrimeField<Repr = [u8; 0x20]>,
@@ -556,7 +589,7 @@ where
         }
     }
 
-    pub fn gate_computations(&self) -> Vec<(Vec<U256>, U256)> {
+    pub fn gate_computations(&self) -> Vec<Vec<U256>> {
         self.cs
             .gates()
             .iter()
@@ -565,9 +598,37 @@ where
             .collect()
     }
 
-    // pub fn permutation_computations(&self, _separate: bool) -> Vec<(Vec<String>, String)> {
-    //     todo!()
-    // }
+    pub fn permutation_computations(&self) -> PermutationDataEncoded {
+        let Self { meta, data, .. } = self;
+        let permutation_z_evals_last_idx = 32 * (data.permutation_z_evals.len() - 1);
+        let chunk_offset = meta.permutation_chunk_len + 1;
+        let permutation_z_evals: Vec<U256> = data
+            .permutation_z_evals
+            .iter()
+            .map(|z| self.encode_z_evaluation_word(z))
+            .collect();
+        let column_evals: Vec<Vec<U256>> = meta
+            .permutation_columns
+            .chunks(meta.permutation_chunk_len)
+            .map(|columns| {
+                columns
+                    .iter()
+                    .map(|column| {
+                        let perm_eval =
+                            U256::from(data.permutation_evals[column].ptr().value().as_usize());
+                        let eval = self.eval_encoded(*column.column_type(), column.index(), 0);
+                        eval | (perm_eval << 24)
+                    })
+                    .collect()
+            })
+            .collect();
+        PermutationDataEncoded {
+            z_evals_last_idx: U256::from(permutation_z_evals_last_idx),
+            chunk_offset: U256::from(chunk_offset),
+            permutation_z_evals,
+            column_evals,
+        }
+    }
 
     // #[cfg(feature = "mv-lookup")]
     // pub fn lookup_computations(
@@ -612,7 +673,7 @@ where
                         .as_usize(),
                 ),
             ),
-            Any::Instance => unimplemented!(),
+            Any::Instance => self.encode_single_operand(1_u8, U256::from(0)), // On the EVM side the 0x0 op heere will inidicate that we need to perform the l_0 mload operation.
         }
     }
 
@@ -632,10 +693,17 @@ where
         U256::from(op) | (ptr << 8)
     }
 
-    fn evaluate_and_reset(&self, expression: &Expression<F>) -> (Vec<U256>, U256) {
+    fn encode_z_evaluation_word(&self, value: &(Word, Word, Word)) -> U256 {
+        let (z_i, z_j, z_i_last) = value;
+        U256::from(z_i.ptr().value().as_usize())
+            | U256::from(z_j.ptr().value().as_usize() << 16)
+            | U256::from(z_i_last.ptr().value().as_usize() << 32)
+    }
+
+    fn evaluate_and_reset(&self, expression: &Expression<F>) -> Vec<U256> {
         let result = self.evaluate_encode(expression);
         self.reset();
-        result
+        result.0
     }
 
     fn evaluate_encode(&self, expression: &Expression<F>) -> (Vec<U256>, U256) {

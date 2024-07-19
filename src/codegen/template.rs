@@ -6,6 +6,8 @@ use askama::{Error, Template};
 use ruint::aliases::U256;
 use std::fmt;
 
+use super::evaluator::PermutationDataEncoded;
+
 #[derive(Template)]
 #[template(path = "Halo2VerifyingKey.sol")]
 pub(crate) struct Halo2VerifyingKey {
@@ -16,6 +18,7 @@ pub(crate) struct Halo2VerifyingKey {
     pub(crate) const_expressions: Vec<U256>,
     pub(crate) gate_computations: Vec<(Vec<U256>, usize)>,
     pub(crate) gate_computations_total_length: usize,
+    pub(crate) permutation_computations: PermutationDataEncoded,
 }
 
 impl Halo2VerifyingKey {
@@ -28,6 +31,7 @@ impl Halo2VerifyingKey {
             + (self.gate_computations.len() * 0x20 + 0x20)
             // Sum up the lengths of al the nested vectors
             + (self.gate_computations_total_length * 0x20)
+            + (self.permutation_computations.len() * 0x20)
     }
 }
 

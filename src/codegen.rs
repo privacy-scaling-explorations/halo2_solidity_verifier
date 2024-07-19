@@ -9,6 +9,7 @@ use crate::codegen::{
         expression_consts, fr_to_u256, g1_to_u256s, g2_to_u256s, ConstraintSystemMeta, Data, Ptr,
     },
 };
+use evaluator::PermutationDataEncoded;
 use halo2_proofs::{
     halo2curves::{bn256, ff::Field},
     plonk::VerifyingKey,
@@ -234,6 +235,7 @@ impl<'a> SolidityGenerator<'a> {
                         U256::from(self.meta.challenge_indices.len() * 32),
                     ),
                     ("gate_computations_len_offset", U256::from(0)), // dummy gate_computations_len_offset
+                    ("permutation_computations_len_offset", U256::from(0)), // dummy permutation_computations_len_offset
                 ]
             } else {
                 vec![
@@ -278,6 +280,7 @@ impl<'a> SolidityGenerator<'a> {
             num_advices_user_challenges: vec![],
             gate_computations: vec![],
             gate_computations_total_length: 0,
+            permutation_computations: PermutationDataEncoded::default(),
         };
 
         if !separate {
@@ -319,23 +322,17 @@ impl<'a> SolidityGenerator<'a> {
         let instance_cptr = U256::from((self.meta.proof_len(self.scheme)) + 0xa4);
 
         // set instance_cptr it at position 7 of the constants.
-        constants[7] = ("instance_cptr", instance_cptr);
+        constants[7].1 = instance_cptr;
 
         let first_quotient_x_cptr = dummy_data.quotient_comm_cptr;
 
         // set first_quotient_x_cptr at position 6 of the constants.
-        constants[6] = (
-            "first_quotient_x_cptr",
-            U256::from(first_quotient_x_cptr.value().as_usize()),
-        );
+        constants[6].1 = U256::from(first_quotient_x_cptr.value().as_usize());
 
         let last_quotient_x_cptr = first_quotient_x_cptr + 2 * (self.meta.num_quotients - 1);
 
         // set last_quotient_x_cptr at position 5 of the constants.
-        constants[5] = (
-            "last_quotient_x_cptr",
-            U256::from(last_quotient_x_cptr.value().as_usize()),
-        );
+        constants[5].1 = U256::from(last_quotient_x_cptr.value().as_usize());
 
         let num_advices = self.meta.num_advices();
         let num_user_challenges = self.meta.num_challenges();
@@ -354,11 +351,11 @@ impl<'a> SolidityGenerator<'a> {
             })
             .collect_vec();
 
-        // Fill in the gate computations with dummy values.
+        // Fill in the gate computations with dummy values. (maintains the correct shape)
         let mut cumulative_length = 0;
         let dummy_gate_computations: Vec<(Vec<U256>, usize)> =
             chain![evaluator_dummy.gate_computations()]
-                .map(|(lines, _)| {
+                .map(|lines| {
                     let operations = lines.iter().map(|_line| U256::from(0)).collect::<Vec<_>>();
                     let length = operations.len();
                     let gate_computation = (operations, cumulative_length);
@@ -381,10 +378,13 @@ impl<'a> SolidityGenerator<'a> {
             + ((num_advices_user_challenges.len() * 0x40) + 0x20);
 
         // set the gate_computations_len_offset at position 28.
-        constants[28] = (
-            "gate_computations_len_offset",
-            U256::from(gate_computations_len_offset),
-        );
+        constants[28].1 = U256::from(gate_computations_len_offset);
+
+        let permutations_computations_len_offset = gate_computations_len_offset
+            + (0x20 * (dummy_gate_computations.len() + cumulative_length) + 0x20);
+
+        // set the gate_computations_len_offset at position 28.
+        constants[29].1 = U256::from(permutations_computations_len_offset);
 
         let mut vk = Halo2VerifyingKey {
             constants,
@@ -394,11 +394,12 @@ impl<'a> SolidityGenerator<'a> {
             num_advices_user_challenges,
             gate_computations: dummy_gate_computations,
             gate_computations_total_length: cumulative_length,
+            permutation_computations: evaluator_dummy.permutation_computations(),
         };
         // Now generate the real vk_mptr with a vk that has the correct length
         let vk_mptr = self.estimate_static_working_memory_size(&vk, Ptr::calldata(0x84));
 
-        // Generte the real data.
+        // Generate the real data.
         let data = Data::new(
             &self.meta,
             &vk,
@@ -407,10 +408,10 @@ impl<'a> SolidityGenerator<'a> {
             true,
         );
         // replace the mock vk_mptr with the real vk_mptr
-        vk.constants[1] = ("vk_mptr", U256::from(vk_mptr));
+        vk.constants[1].1 = U256::from(vk_mptr);
         // replace the mock vk_len with the real vk_len
         let vk_len = vk.len();
-        vk.constants[2] = ("vk_len", U256::from(vk_len));
+        vk.constants[2].1 = U256::from(vk_len);
 
         // Regenerate the gate computations with the correct offsets.
         let mut vk_lookup_const_table: HashMap<ruint::Uint<256, 4>, Ptr> = HashMap::new();
@@ -433,7 +434,7 @@ impl<'a> SolidityGenerator<'a> {
 
         let mut cumulative_length = 0;
         let gate_computations: Vec<(Vec<U256>, usize)> = chain![evaluator.gate_computations()]
-            .map(|(lines, _)| {
+            .map(|lines| {
                 let operations = lines
                     .iter()
                     .map(|line: &ruint::Uint<256, 4>| U256::from(*line))
@@ -445,8 +446,8 @@ impl<'a> SolidityGenerator<'a> {
             })
             .collect();
 
-        vk.gate_computations = gate_computations;
         // NOTE: We don't need to replace the gate_computations_total_length since we are only potentially modifying the offsets for each constant mload operation.
+        vk.gate_computations = gate_computations;
         vk
     }
 
@@ -464,7 +465,7 @@ impl<'a> SolidityGenerator<'a> {
         let quotient_eval_numer_computations: Vec<Vec<String>> = chain![
             evaluator.gate_computations(),
             evaluator.permutation_computations(false),
-            evaluator.lookup_computations(None, false)
+            evaluator.lookup_computations(None, false),
         ]
         .enumerate()
         .map(|(idx, (mut lines, var))| {
@@ -532,7 +533,7 @@ impl<'a> SolidityGenerator<'a> {
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
         let quotient_eval_numer_computations: Vec<Vec<String>> = chain![
             // evaluator.gate_computations(),
-            evaluator.permutation_computations(true),
+            // evaluator.permutation_computations(true),
             evaluator.lookup_computations(Some(vk_lookup_const_table), true)
         ]
         .enumerate()
