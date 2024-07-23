@@ -6,7 +6,7 @@ use askama::{Error, Template};
 use ruint::aliases::U256;
 use std::fmt;
 
-use super::evaluator::PermutationDataEncoded;
+use super::evaluator::{LookupsDataEncoded, PermutationDataEncoded};
 
 #[derive(Template)]
 #[template(path = "Halo2VerifyingKey.sol")]
@@ -19,6 +19,7 @@ pub(crate) struct Halo2VerifyingKey {
     pub(crate) gate_computations: Vec<(Vec<U256>, usize)>,
     pub(crate) gate_computations_total_length: usize,
     pub(crate) permutation_computations: PermutationDataEncoded,
+    pub(crate) lookup_computations: LookupsDataEncoded,
 }
 
 impl Halo2VerifyingKey {
@@ -32,6 +33,7 @@ impl Halo2VerifyingKey {
             // Sum up the lengths of al the nested vectors
             + (self.gate_computations_total_length * 0x20)
             + (self.permutation_computations.len() * 0x20)
+            + (self.lookup_computations.len() * 0x20)
     }
 }
 
@@ -62,7 +64,6 @@ pub(crate) struct Halo2VerifierReusable {
     pub(crate) scheme: BatchOpenScheme,
     pub(crate) num_neg_lagranges: usize,
     pub(crate) num_evals: usize,
-    pub(crate) quotient_eval_numer_computations: Vec<Vec<String>>,
     pub(crate) pcs_computations: Vec<Vec<String>>,
 }
 

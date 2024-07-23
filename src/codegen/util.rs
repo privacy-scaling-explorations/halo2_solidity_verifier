@@ -404,7 +404,8 @@ impl Data {
             + (2 * vk.num_advices_user_challenges.len() + 1)
             + (vk.gate_computations.len() + 1)
             + (vk.gate_computations_total_length)
-            + (vk.permutation_computations.len());
+            + (vk.permutation_computations.len())
+            + (vk.lookup_computations.len());
         let theta_mptr = challenge_mptr + meta.challenge_indices.len();
 
         let advice_comm_start = proof_cptr;

@@ -569,6 +569,72 @@ impl PermutationDataEncoded {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct InputsEncoded {
+    pub(crate) expression: Vec<U256>,
+    pub(crate) vars: U256,
+    pub(crate) acc: usize,
+}
+
+// Holds the encoded data stored in the separate VK
+// needed to perform the lookup computations for one lookup table
+// in the quotient evaluation portion of the reusable verifier.
+#[derive(Clone, PartialEq, Eq)]
+pub struct LookupEncoded {
+    pub(crate) evals: U256,
+    pub(crate) table_lines: U256,
+    pub(crate) acc: usize,
+    pub(crate) inputs: Vec<InputsEncoded>,
+}
+
+// For each element of the lookups vector we have a word for:
+// 1) the evals (cptr, cptr, cptr),
+// 2) table lines Vec<cptr> packed into a single (throws an error if table_lines.len() > 16)
+// 3) outer_inputs_len (inputs.0.len())
+// For each element of the inputs vector in LookupEncoded we have a word for:
+// 1) input_lines_len (inputs[i].0.len()) packed into a single (throws an error if inputs.1.len() > 16)
+// 2) inputs (inputs[i].1) packed into a single (throws an error if inputs.1.len() > 16)
+// Then we have a word for each step in the expression evaluation. This is the
+// sum of the lengths of the inputs.
+impl LookupEncoded {
+    pub fn len(&self) -> usize {
+        3 + (2 * self.inputs.len())
+            + self
+                .inputs
+                .iter()
+                .map(|inputs| inputs.expression.len())
+                .sum::<usize>()
+    }
+}
+
+// Holds the encoded data stored in the separate VK
+// needed to perform the lookup computations of all the lookup tables
+// needed in the quotient evaluation portion of the reusable verifier.
+#[derive(Clone, PartialEq, Eq)]
+pub struct LookupsDataEncoded {
+    pub(crate) end_ptr: U256,
+    pub(crate) lookups: Vec<LookupEncoded>,
+}
+
+impl Default for LookupsDataEncoded {
+    fn default() -> Self {
+        LookupsDataEncoded {
+            end_ptr: U256::from(0),
+            lookups: Vec::new(),
+        }
+    }
+}
+
+impl LookupsDataEncoded {
+    pub fn len(&self) -> usize {
+        if self == &Self::default() {
+            0
+        } else {
+            1 + self.lookups.iter().map(LookupEncoded::len).sum::<usize>()
+        }
+    }
+}
+
 impl<'a, F> EvaluatorVK<'a, F>
 where
     F: PrimeField<Repr = [u8; 0x20]>,
@@ -583,7 +649,7 @@ where
             cs,
             meta,
             data,
-            static_mem_ptr: RefCell::new(0x20),
+            static_mem_ptr: RefCell::new(0x00),
             encoded_var_cache: Default::default(),
             const_cache: RefCell::new(const_cache),
         }
@@ -605,7 +671,7 @@ where
         let permutation_z_evals: Vec<U256> = data
             .permutation_z_evals
             .iter()
-            .map(|z| self.encode_z_evaluation_word(z))
+            .map(|z| self.encode_triplet_evaluation_word(z))
             .collect();
         let column_evals: Vec<Vec<U256>> = meta
             .permutation_columns
@@ -630,23 +696,134 @@ where
         }
     }
 
-    // #[cfg(feature = "mv-lookup")]
-    // pub fn lookup_computations(
-    //     &self,
-    //     _vk_lookup_const_table: Option<HashMap<ruint::Uint<256, 4>, super::util::Ptr>>,
-    //     _separate: bool,
-    // ) -> Vec<(Vec<String>, String)> {
-    //     todo!()
-    // }
+    #[cfg(feature = "mv-lookup")]
+    pub fn lookup_computations(&self, offset: usize) -> LookupsDataEncoded {
+        let evaluate_table = |expressions: &Vec<_>| {
+            // println!("expressions: {:?}", expressions);
+            let (lines, inputs) = expressions
+                .iter()
+                .map(|expression| self.evaluate_encode_calldata(expression))
+                .fold((Vec::new(), Vec::new()), |mut acc, result| {
+                    acc.0.extend(result.0);
+                    acc.1.push(result.1);
+                    acc
+                });
+            // assert that lines.len() <= and inputs.len() == inputs.len()
+            assert!(lines.len() <= 16);
+            assert!(inputs.len() == lines.len());
+            self.reset();
+            (lines, inputs)
+        };
 
-    // #[cfg(not(feature = "mv-lookup"))]
-    // pub fn lookup_computations(
-    //     &self,
-    //     _vk_lookup_const_table: Option<HashMap<ruint::Uint<256, 4>, super::util::Ptr>>,
-    //     _separate: bool,
-    // ) -> Vec<(Vec<String>, String)> {
-    //     todo!()
-    // }
+        let evaluate_inputs = |idx: usize, expressions: &Vec<_>| {
+            // println!("expressions: {:?}", expressions);
+            let offset = 0xa0; // offset to store theta offset ptrs used
+                               // in the lookup computations.
+            let fsm = (0x20 * idx) + offset;
+            self.set_static_mem_ptr(fsm);
+            let (lines, inputs) = expressions
+                .iter()
+                .map(|expression| self.evaluate_encode(expression))
+                .fold((Vec::new(), Vec::new()), |mut acc, result| {
+                    acc.0.extend(result.0);
+                    acc.1.push(result.1);
+                    acc
+                });
+            // TODO: Add this free memory pointer
+            // incrementation to the estimate free static memory function.
+            self.reset();
+            (lines, inputs)
+        };
+
+        let inputs_tables = self
+            .cs
+            .lookups()
+            .iter()
+            .map(|lookup| {
+                let inputs_iter = lookup.input_expressions().iter().enumerate();
+                let inputs = inputs_iter
+                    .clone()
+                    .map(|(idx, expressions)| {
+                        let (lines, inputs) = evaluate_inputs(idx, expressions);
+                        (lines, inputs)
+                    })
+                    .collect_vec();
+                let table = evaluate_table(lookup.table_expressions());
+                (inputs, table)
+            })
+            .collect_vec();
+
+        let mut accumulator = 0;
+
+        let lookups: Vec<LookupEncoded> = izip!(inputs_tables, &self.data.lookup_evals)
+            .map(|(inputs_tables, evals)| {
+                let (inputs, (table_lines, _)) = inputs_tables.clone();
+                let evals = self.encode_triplet_evaluation_word(evals);
+                let table_lines = self.encode_pack_ptrs(&table_lines);
+                let mut inner_accumulator = 0;
+                let inputs: Vec<InputsEncoded> = inputs
+                    .iter()
+                    .map(|(input_lines, inputs)| {
+                        let inputs = self.encode_pack_ptrs(inputs);
+                        let res = InputsEncoded {
+                            expression: input_lines.clone(),
+                            vars: inputs,
+                            acc: inner_accumulator,
+                        };
+                        inner_accumulator += input_lines.len() + 1;
+                        res
+                    })
+                    .collect_vec();
+                let lookup_encoded = LookupEncoded {
+                    evals,
+                    table_lines,
+                    inputs: inputs.clone(),
+                    acc: accumulator,
+                };
+                accumulator += inputs
+                    .iter()
+                    .map(|inputs| inputs.expression.len())
+                    .sum::<usize>()
+                    + (inputs.len() * 2);
+                lookup_encoded
+            })
+            .collect_vec();
+        let mut data = LookupsDataEncoded {
+            lookups,
+            end_ptr: U256::from(0),
+        };
+        data.end_ptr = U256::from((data.len() * 32) + offset);
+        data
+    }
+
+    #[cfg(not(feature = "mv-lookup"))]
+    pub fn lookup_computations(&self, offset: usize) -> LookupsDataEncoded {
+        // TODO implement non mv lookup version of this
+        LookupsDataEncoded::default()
+    }
+
+    fn eval_encode_raw_cptr(
+        &self,
+        column_type: impl Into<Any>,
+        column_index: usize,
+        rotation: i32,
+    ) -> U256 {
+        match column_type.into() {
+            Any::Advice(_) => U256::from(
+                self.data.advice_evals[&(column_index, rotation)]
+                    .ptr()
+                    .value()
+                    .as_usize(),
+            ),
+            Any::Fixed => U256::from(
+                self.data.fixed_evals[&(column_index, rotation)]
+                    .ptr()
+                    .value()
+                    .as_usize(),
+            ),
+            Any::Instance => unimplemented!(), // On the EVM side the 0x0 op here we will inidicate that we need to perform the l_0 mload operation.
+        }
+    }
 
     fn eval_encoded(
         &self,
@@ -673,7 +850,7 @@ where
                         .as_usize(),
                 ),
             ),
-            Any::Instance => self.encode_single_operand(1_u8, U256::from(0)), // On the EVM side the 0x0 op heere will inidicate that we need to perform the l_0 mload operation.
+            Any::Instance => self.encode_single_operand(1_u8, U256::from(0)), // On the EVM side the 0x0 op here we will inidicate that we need to perform the l_0 mload operation.
         }
     }
 
@@ -681,7 +858,7 @@ where
     // any of the steps require the same var then just return the pointer to the var instead of encoding it again
 
     fn reset(&self) {
-        *self.static_mem_ptr.borrow_mut() = 0x20;
+        *self.static_mem_ptr.borrow_mut() = 0x0;
         *self.encoded_var_cache.borrow_mut() = Default::default();
     }
 
@@ -693,17 +870,54 @@ where
         U256::from(op) | (ptr << 8)
     }
 
-    fn encode_z_evaluation_word(&self, value: &(Word, Word, Word)) -> U256 {
+    fn encode_triplet_evaluation_word(&self, value: &(Word, Word, Word)) -> U256 {
         let (z_i, z_j, z_i_last) = value;
         U256::from(z_i.ptr().value().as_usize())
             | U256::from(z_j.ptr().value().as_usize() << 16)
             | U256::from(z_i_last.ptr().value().as_usize() << 32)
     }
 
+    // pack as many as 16 ptrs into a single word
+    // throws an error if the number of ptrs is greater than 16
+    fn encode_pack_ptrs(&self, ptrs: &[U256]) -> U256 {
+        let mut packed = U256::from(0);
+        for (i, ptr) in ptrs.iter().enumerate() {
+            packed |= *ptr << (i * 16);
+        }
+        packed
+    }
+
     fn evaluate_and_reset(&self, expression: &Expression<F>) -> Vec<U256> {
+        *self.static_mem_ptr.borrow_mut() = 0x0;
         let result = self.evaluate_encode(expression);
         self.reset();
         result.0
+    }
+
+    fn set_static_mem_ptr(&self, value: usize) {
+        *self.static_mem_ptr.borrow_mut() = value;
+    }
+
+    fn evaluate_encode_calldata(&self, expression: &Expression<F>) -> (Vec<U256>, U256) {
+        evaluate_calldata(
+            expression,
+            &|query| {
+                self.init_encoded_var(
+                    self.eval_encode_raw_cptr(Fixed, query.column_index(), query.rotation().0),
+                    OperandMem::Calldata,
+                )
+            },
+            &|query| {
+                self.init_encoded_var(
+                    self.eval_encode_raw_cptr(
+                        Advice::default(),
+                        query.column_index(),
+                        query.rotation().0,
+                    ),
+                    OperandMem::Calldata,
+                )
+            },
+        )
     }
 
     fn evaluate_encode(&self, expression: &Expression<F>) -> (Vec<U256>, U256) {
@@ -851,7 +1065,7 @@ fn evaluate<F, T>(
 where
     F: PrimeField<Repr = [u8; 0x20]>,
 {
-    let evaluate = |expr| {
+    let evaluate = |expr: &Expression<F>| {
         evaluate(
             expr, constant, fixed, advice, instance, challenge, negated, sum, product, scaled,
         )
@@ -867,5 +1081,28 @@ where
         Expression::Sum(lhs, rhs) => sum(evaluate(lhs), evaluate(rhs)),
         Expression::Product(lhs, rhs) => product(evaluate(lhs), evaluate(rhs)),
         Expression::Scaled(value, scalar) => scaled(evaluate(value), fe_to_u256(*scalar)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_calldata<F, T>(
+    expression: &Expression<F>,
+    fixed: &impl Fn(FixedQuery) -> T,
+    advice: &impl Fn(AdviceQuery) -> T,
+) -> T
+where
+    F: PrimeField<Repr = [u8; 0x20]>,
+{
+    match expression {
+        Expression::Constant(_) => unreachable!(),
+        Expression::Selector(_) => unreachable!(),
+        Expression::Fixed(query) => fixed(*query),
+        Expression::Advice(query) => advice(*query),
+        Expression::Instance(_) => unreachable!(),
+        Expression::Challenge(_) => unreachable!(),
+        Expression::Negated(_) => unreachable!(),
+        Expression::Sum(_, _) => unreachable!(),
+        Expression::Product(_, _) => unreachable!(),
+        Expression::Scaled(_, _) => unreachable!(),
     }
 }

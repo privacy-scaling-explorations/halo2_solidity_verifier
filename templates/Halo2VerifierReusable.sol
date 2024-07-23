@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.26;
 
 contract Halo2Verifier {
     uint256 internal constant    PROOF_LEN_CPTR = 0x64;
@@ -173,7 +173,7 @@ contract Halo2Verifier {
                 ret3 := permutation_z_evals
             }
 
-            function col_evaluations(z, chunk, permutation_z_evals_ptr, theta_mptr) {
+            function col_evals(z, chunk, permutation_z_evals_ptr, theta_mptr) {
                 let gamma := mload(add(theta_mptr, 0x40))
                 let beta := mload(add(theta_mptr, 0x20))
                 let x := mload(add(theta_mptr, 0x80))
@@ -212,7 +212,7 @@ contract Halo2Verifier {
                         mulmod(l_0, addmod(calldataload(and(z_j, 0xFFFF)), sub(R, calldataload(and(shr(32,z), 0xFFFF))), R), R), 
                         R
                     )
-                    col_evaluations(z, permutation_chunk, permutation_z_evals_ptr, theta_mptr)
+                    col_evals(z, permutation_chunk, permutation_z_evals_ptr, theta_mptr)
                     permutation_z_evals_ptr := next_z_ptr
                     z := z_j
                 } 
@@ -220,8 +220,8 @@ contract Halo2Verifier {
                 // We store this length right after the last perm_z_evals word.
                 let chunk_offset_last_ptr := add(permutation_z_evals_ptr, 0x20) 
                 permutation_chunk := mload(chunk_offset_last_ptr) // Remeber to store (columns.len() + 1) * 32 here
-                col_evaluations(z, permutation_chunk, chunk_offset_last_ptr, theta_mptr)
-                // iterate through col_evaluations to update the quotient_eval_numer accumulator
+                col_evals(z, permutation_chunk, chunk_offset_last_ptr, theta_mptr)
+                // iterate through col_evals to update the quotient_eval_numer accumulator
                 let end_ptr := mload(0x20)
                 for { let j := 0x40 } lt(j, end_ptr) { j := add(j, 0x20) } {
                     quotient_eval_numer := addmod(mulmod(quotient_eval_numer, y, R), mload(j), R)
@@ -229,6 +229,37 @@ contract Halo2Verifier {
                 ret := quotient_eval_numer
             }
 
+            function expression_evals(fsmp, code_len, code_ptr) {
+                for { let i := 0 } lt(i, code_len) { i := add(i, 0x20) } {
+                    /// @dev Note we can optimize the amount of space the expressions take up by packing 32/5 == 6 expressions into a single word
+                    let expression := mload(add(code_ptr, i))
+                    // Load in the least significant byte of the `expression` word to get the operation type 
+                    // Then determine which operation to peform and then store the result in the next available memory slot.
+                    switch and(expression, 0xFF)
+                    // 0x00 => Advice/Fixed expression
+                    case 0x00 {
+                        // Load the calldata ptr from the expression, which come from the 2nd and 3rd least significant bytes.
+                        mstore(add(fsmp, i), calldataload(and(shr(8, expression), 0xFFFF)))
+                    } 
+                    // 0x01 => Negated expression
+                    case 0x01 {
+                        // Load the memory ptr from the expression, which come from the 2nd and 3rd least significant bytes
+                        mstore(add(fsmp, i), sub(R, mload(and(shr(8, expression), 0xFFFF))))
+                    }
+                    // 0x02 => Sum expression
+                    case 0x02 {
+                        // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
+                        // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
+                        mstore(add(fsmp, i), addmod(mload(and(shr(8, expression), 0xFFFF)),mload(and(shr(24, expression), 0xFFFF)),R))
+                    }
+                    // 0x03 => Product/scalar expression
+                    case 0x03 {
+                        // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
+                        // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
+                        mstore(add(fsmp, i), mulmod(mload(and(shr(8, expression), 0xFFFF)),mload(and(shr(24, expression), 0xFFFF)),R))
+                    }
+                }
+            }
 
             // Modulus
 
@@ -461,7 +492,7 @@ contract Halo2Verifier {
             // TODO:
             // [X] Gate computations
             // [X] Permutation computations
-            // [ ] Lookup computations
+            // [X] Lookup computations
             {
                 let quotient_eval_numer
                 let y := mload(add(theta_mptr, 0x60))
@@ -469,56 +500,29 @@ contract Halo2Verifier {
                     // Gate computations / expression evaluations.
                     let computations_ptr, computations_len := soa_layout_metadata(0x380, vk_mptr)
                     let expression := 0x0 // Initialize this to 0. Will set it later in the loop. Expression represent the operation type and assocaited operand pointers.
-                    let expression_acc := 0
-                    let free_static_memory_ptr := 0x20 // Initialize at 0x20 b/c 0x00 to store vars that need to persist across certain code blocks
+                    let expression_acc := 0x0
                     // Load in the total number of code blocks from the vk constants, right after the number challenges
                     for { let code_block := 0 } lt(code_block, computations_len) { code_block := add(code_block, 0x20) } {
                         let code_ptr := add(add(computations_ptr, code_block), expression_acc)
                         // Shift the code_len by the free_static_memory_ptr
-                        let code_len := add(mload(code_ptr), free_static_memory_ptr)
-                        // loop through code len
-                        for { let i := free_static_memory_ptr } lt(i, code_len) { i := add(i, 0x20) } {
-                            /// @dev Note we can optimize the amount of space the expressions take up by packing 32/5 == 6 expressions into a single word
-                            expression := mload(add(code_ptr, i))
-                            expression_acc := add(expression_acc, 0x20)
-                            
-                            // Load in the least significant byte of the `expression` word to get the operation type 
-                            // Then determine which operation to peform and then store the result in the next available memory slot.
-                            switch and(expression, 0xFF)
-                            // 0x00 => Advice/Fixed expression
-                            case 0x00 {
-                                // Load the calldata ptr from the expression, which come from the 2nd and 3rd least significant bytes.
-                                mstore(i,calldataload(and(shr(8, expression), 0xFFFF)))
-                            } 
-                            // 0x01 => Negated expression
-                            case 0x01 {
-                                // Load the memory ptr from the expression, which come from the 2nd and 3rd least significant bytes
-                                mstore(i,sub(R, mload(and(shr(8, expression), 0xFFFF))))
-                            }
-                            // 0x02 => Sum expression
-                            case 0x02 {
-                                // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
-                                // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
-                                mstore(i,addmod(mload(and(shr(8, expression), 0xFFFF)),mload(and(shr(24, expression), 0xFFFF)),R))
-                            }
-                            // 0x03 => Product/scalar expression
-                            case 0x03 {
-                                // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
-                                // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
-                                mstore(i,mulmod(mload(and(shr(8, expression), 0xFFFF)),mload(and(shr(24, expression), 0xFFFF)),R))
-                            }
-                        }
+                        let code_len := mload(code_ptr)
+                        // call expression_evals to evaluate the expressions in the code block
+                        expression_evals(0x00, code_len, add(code_ptr, 0x20))
+
+                        expression_acc := add(expression_acc, code_len)
+
+                        let last_idx := sub(code_len, 0x20)
 
                         // at the end of each code block we update `quotient_eval_numer`
 
                         // If this is the first code block, we set `quotient_eval_numer` to the last var in the code block
                         switch eq(code_block, 0)
                         case 1 {
-                            quotient_eval_numer := mload(sub(code_len, free_static_memory_ptr))
+                            quotient_eval_numer := mload(last_idx)
                         }
                         case 0 {
                             // Otherwise we add the last var in the code block to `quotient_eval_numer` mod r
-                            quotient_eval_numer := addmod(mulmod(quotient_eval_numer, y, R), mload(sub(code_len, free_static_memory_ptr)), R)
+                            quotient_eval_numer := addmod(mulmod(quotient_eval_numer, y, R), mload(last_idx), R)
                         }
                     }
                 }
@@ -567,14 +571,124 @@ contract Halo2Verifier {
                 }
                 {
                     // Lookup computations
-                    {%- for code_block in quotient_eval_numer_computations %}
-                    {
-                        {%- for line in code_block %}
-                        {{ line }}
-                        {%- endfor %}
+                    mstore(0x0, mload(add(theta_mptr, 0x1C0))) // l_last
+                    mstore(0x20, mload(add(theta_mptr, 0x200))) // l_0
+                    mstore(0x40, mload(add(theta_mptr, 0x1E0))) // l_blind
+                    mstore(0x60, mload(theta_mptr)) // theta
+                    mstore(0x80, mload(add(theta_mptr, 0x20))) // beta
+                    let evals_ptr, end_ptr := soa_layout_metadata(0x3c0, vk_mptr) // TODO: Compute the end ptr of the lookup computations space
+                    // iterate through the input_tables_len
+                    for { } lt(evals_ptr, end_ptr) { } {
+                        let evals := mload(evals_ptr)
+                        let phi := and(evals, 0xFFFF)
+                        quotient_eval_numer := addmod(
+                            mulmod(quotient_eval_numer, y, R), 
+                            mulmod(mload(0x20),calldataload(phi), R), 
+                            R
+                        )
+                        quotient_eval_numer := addmod(
+                            mulmod(quotient_eval_numer, y, R),
+                            mulmod(mload(0x00), calldataload(phi), R), 
+                            R
+                        )
+                        let table
+                        // load in the table_lines_len from the evals_ptr
+                        evals_ptr := add(evals_ptr, 0x20)
+                        let table_lines := mload(evals_ptr)
+                        table := calldataload(and(table_lines, 0xFFFF))
+                        table_lines := shr(16, table_lines)
+                        for {  } table_lines { } {
+                            // extract the calldata ptr from the tables_lines
+                            table := addmod(
+                                mulmod(table, mload(0x60), R),
+                                calldataload(and(table_lines, 0xFFFF)),
+                                R
+                            )
+                            table_lines := shr(16, table_lines)
+                        }
+                        table := addmod(table, mload(0x80), R)
+                        evals_ptr := add(evals_ptr, 0x20)
+                        let outer_inputs_len := mload(evals_ptr)
+                        for { let j := 0xa0 } lt(j, add(outer_inputs_len, 0xa0)) { j := add(j, 0x20) } {
+                            evals_ptr := add(evals_ptr, 0x20)
+                            let input_lines_len := mload(evals_ptr)
+                            // call the expression_evals function to evaluate the input_lines
+                            expression_evals(j, input_lines_len, add(evals_ptr, 0x20))
+                            evals_ptr := add(add(evals_ptr, input_lines_len), 0x20)
+                            let inputs := mload(evals_ptr)
+                            let ident := mload(and(inputs, 0xFFFF))
+                            inputs := shr(16, inputs)
+                            for {  } inputs { } {
+                                // extract the mload ptr from the inputs stored in memory
+                                ident := addmod(
+                                    mulmod(ident, mload(0x60), R),
+                                    mload(and(inputs, 0xFFFF)),
+                                    R
+                                )
+                                inputs := shr(16, inputs)
+                            }
+                            ident := addmod(ident, mload(0x80), R)
+                            // store ident in free static memory
+                            mstore(j, ident)
+                        }
+                        evals_ptr := add(evals_ptr, 0x20)
+                        let lhs
+                        let rhs
+                        switch eq(outer_inputs_len, 0x20)
+                        case 1 {
+                            rhs := table
+                        } default {
+                            // iterate through the outer_inputs_len
+                            let last_idx := sub(outer_inputs_len, 0x20)
+                            for { let i := 0 } lt(i, outer_inputs_len) { i := add(i, 0x20) } {
+                                // iterate through the outer_inputs_len
+                                let tmp := mload(0xa0)
+                                if eq(i, 0){
+                                    tmp := mload(0xc0)
+                                }
+                                for { let j := 0 } lt(j, outer_inputs_len) { j := add(j, 0x20) } {
+                                    if eq(i, j) {
+                                        continue
+                                    }
+                                    tmp := mulmod(tmp, mload(j), R)
+                                    
+                                }
+                                rhs := addmod(rhs, tmp, R)
+                                if eq(i, last_idx) {
+                                    rhs := mulmod(rhs, table, R)
+                                } 
+                            }
+                        }
+                        let tmp := mload(0xa0)
+                        for { let j := 0x20 } lt(j, outer_inputs_len) { j := add(j, 0x20) } {
+                            tmp := mulmod(tmp, mload(j), R)
+                        }
+                        rhs := addmod(
+                            rhs, 
+                            sub(R, mulmod(calldataload(and(shr(32, evals), 0xFFFF)), tmp, R)),
+                            R
+                        )
+                        lhs := mulmod(
+                            mulmod(table, tmp, R),
+                            addmod(calldataload(and(shr(16, evals), 0xFFFF)), sub(R, calldataload(phi)), R), 
+                            R
+                        )
+                        quotient_eval_numer := addmod(
+                            mulmod(quotient_eval_numer, y, R),
+                            mulmod(
+                                addmod(
+                                    1, 
+                                    sub(R, addmod(mload(0x40), mload(0x00), R)),
+                                    R
+                                ), 
+                                addmod(lhs, sub(R, rhs), R),
+                                R
+                            ), 
+                            R
+                        )
                     }
-                    {%- endfor %}
                 }
+
                 pop(y)
 
                 mstore(add(theta_mptr, 0x240), mulmod(quotient_eval_numer, mload(add(theta_mptr, 0x1a0)), R))

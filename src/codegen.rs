@@ -9,7 +9,7 @@ use crate::codegen::{
         expression_consts, fr_to_u256, g1_to_u256s, g2_to_u256s, ConstraintSystemMeta, Data, Ptr,
     },
 };
-use evaluator::PermutationDataEncoded;
+use evaluator::{LookupsDataEncoded, PermutationDataEncoded};
 use halo2_proofs::{
     halo2curves::{bn256, ff::Field},
     plonk::VerifyingKey,
@@ -236,6 +236,7 @@ impl<'a> SolidityGenerator<'a> {
                     ),
                     ("gate_computations_len_offset", U256::from(0)), // dummy gate_computations_len_offset
                     ("permutation_computations_len_offset", U256::from(0)), // dummy permutation_computations_len_offset
+                    ("lookup_computations_len_offset", U256::from(0)), // dummy lookup_computations_len_offset
                 ]
             } else {
                 vec![
@@ -281,6 +282,7 @@ impl<'a> SolidityGenerator<'a> {
             gate_computations: vec![],
             gate_computations_total_length: 0,
             permutation_computations: PermutationDataEncoded::default(),
+            lookup_computations: LookupsDataEncoded::default(),
         };
 
         if !separate {
@@ -386,6 +388,12 @@ impl<'a> SolidityGenerator<'a> {
         // set the gate_computations_len_offset at position 28.
         constants[29].1 = U256::from(permutations_computations_len_offset);
 
+        let lookup_computations_len_offset = permutations_computations_len_offset
+            + (0x20 * evaluator_dummy.permutation_computations().len());
+
+        // set the lookup_computations_len_offset at position 30.
+        constants[30].1 = U256::from(lookup_computations_len_offset);
+
         let mut vk = Halo2VerifyingKey {
             constants,
             fixed_comms,
@@ -395,6 +403,7 @@ impl<'a> SolidityGenerator<'a> {
             gate_computations: dummy_gate_computations,
             gate_computations_total_length: cumulative_length,
             permutation_computations: evaluator_dummy.permutation_computations(),
+            lookup_computations: evaluator_dummy.lookup_computations(0),
         };
         // Now generate the real vk_mptr with a vk that has the correct length
         let vk_mptr = self.estimate_static_working_memory_size(&vk, Ptr::calldata(0x84));
@@ -448,6 +457,9 @@ impl<'a> SolidityGenerator<'a> {
 
         // NOTE: We don't need to replace the gate_computations_total_length since we are only potentially modifying the offsets for each constant mload operation.
         vk.gate_computations = gate_computations;
+        // We need to replace the lookup_computations so that the constant mptrs in the encoded input expessions have the correct offsets.
+        vk.lookup_computations =
+            evaluator.lookup_computations(vk_mptr + lookup_computations_len_offset);
         vk
     }
 
@@ -529,26 +541,6 @@ impl<'a> SolidityGenerator<'a> {
             });
 
         let data = Data::new(&self.meta, &vk, vk_mptr, proof_cptr, true);
-
-        let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
-        let quotient_eval_numer_computations: Vec<Vec<String>> = chain![
-            // evaluator.gate_computations(),
-            // evaluator.permutation_computations(true),
-            evaluator.lookup_computations(Some(vk_lookup_const_table), true)
-        ]
-        .enumerate()
-        .map(|(idx, (mut lines, var))| {
-            let line = if idx == usize::MAX {
-                format!("quotient_eval_numer := {var}")
-            } else {
-                format!(
-                    "quotient_eval_numer := addmod(mulmod(quotient_eval_numer, y, R), {var}, R)"
-                )
-            };
-            lines.push(line);
-            lines
-        })
-        .collect();
         // iterate through the quotient_eval_numer_computations and determine longest Vec<String> within the Vec<Vec<String>>.
         // TODO: Use this to estimate static working memory size
         // let quotient_eval_numer_computations_longest = quotient_eval_numer_computations
@@ -570,7 +562,6 @@ impl<'a> SolidityGenerator<'a> {
             scheme: self.scheme,
             num_neg_lagranges: self.meta.rotation_last.unsigned_abs() as usize,
             num_evals: self.meta.num_evals,
-            quotient_eval_numer_computations,
             pcs_computations,
         }
     }
