@@ -4,6 +4,7 @@ use crate::codegen::{
 };
 use askama::{Error, Template};
 use ruint::aliases::U256;
+use std::collections::HashMap;
 use std::fmt;
 
 use super::evaluator::{LookupsDataEncoded, PermutationDataEncoded};
@@ -62,9 +63,8 @@ pub(crate) struct Halo2Verifier {
 #[template(path = "Halo2VerifierReusable.sol")]
 pub(crate) struct Halo2VerifierReusable {
     pub(crate) scheme: BatchOpenScheme,
-    pub(crate) num_neg_lagranges: usize,
-    pub(crate) num_evals: usize,
     pub(crate) pcs_computations: Vec<Vec<String>>,
+    pub(crate) vk_const_offsets: HashMap<&'static str, U256>,
 }
 
 impl Halo2VerifyingKey {

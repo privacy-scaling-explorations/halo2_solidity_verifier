@@ -170,100 +170,140 @@ impl<'a> SolidityGenerator<'a> {
         Ok((verifier_output, vk_output))
     }
 
-    fn generate_vk(&self, separate: bool) -> Halo2VerifyingKey {
-        let mut constants = {
-            let domain = self.vk.get_domain();
-            let vk_digest = fr_to_u256(vk_transcript_repr(self.vk));
-            let num_instances = U256::from(self.num_instances);
-            let k = U256::from(domain.k());
-            let n_inv = fr_to_u256(bn256::Fr::from(1 << domain.k()).invert().unwrap());
-            let omega = fr_to_u256(domain.get_omega());
-            let omega_inv = fr_to_u256(domain.get_omega_inv());
-            let omega_inv_to_l = {
-                let l = self.meta.rotation_last.unsigned_abs() as u64;
-                fr_to_u256(domain.get_omega_inv().pow_vartime([l]))
-            };
-            let has_accumulator = U256::from(self.acc_encoding.is_some() as usize);
-            let acc_offset = self
-                .acc_encoding
-                .map(|acc_encoding| U256::from(acc_encoding.offset))
-                .unwrap_or_default();
-            let num_acc_limbs = self
-                .acc_encoding
-                .map(|acc_encoding| U256::from(acc_encoding.num_limbs))
-                .unwrap_or_default();
-            let num_acc_limb_bits = self
-                .acc_encoding
-                .map(|acc_encoding| U256::from(acc_encoding.num_limb_bits))
-                .unwrap_or_default();
-            let g1 = self.params.get_g()[0];
-            let g1 = g1_to_u256s(g1);
-            let g2 = g2_to_u256s(self.params.g2());
-            let neg_s_g2 = g2_to_u256s(-self.params.s_g2());
+    fn dummy_vk_constants(separate: bool) -> Vec<(&'static str, U256)> {
+        if separate {
+            vec![
+                ("vk_digest", U256::from(0)),
+                ("vk_mptr", U256::from(0)),
+                ("vk_len", U256::from(0)),
+                ("num_instances", U256::from(0)),
+                ("num_advices_user_challenges_offset", U256::from(0)),
+                ("last_quotient_x_cptr", U256::from(0)),
+                ("first_quotient_x_cptr", U256::from(0)),
+                ("instance_cptr", U256::from(0)),
+                ("k", U256::from(0)),
+                ("n_inv", U256::from(0)),
+                ("omega", U256::from(0)),
+                ("omega_inv", U256::from(0)),
+                ("omega_inv_to_l", U256::from(0)),
+                ("has_accumulator", U256::from(0)),
+                ("acc_offset", U256::from(0)),
+                ("num_acc_limbs", U256::from(0)),
+                ("num_acc_limb_bits", U256::from(0)),
+                ("g1_x", U256::from(0)),
+                ("g1_y", U256::from(0)),
+                ("g2_x_1", U256::from(0)),
+                ("g2_x_2", U256::from(0)),
+                ("g2_y_1", U256::from(0)),
+                ("g2_y_2", U256::from(0)),
+                ("neg_s_g2_x_1", U256::from(0)),
+                ("neg_s_g2_x_2", U256::from(0)),
+                ("neg_s_g2_y_1", U256::from(0)),
+                ("neg_s_g2_y_2", U256::from(0)),
+                ("challenges_offset", U256::from(0)),
+                ("gate_computations_len_offset", U256::from(0)),
+                ("permutation_computations_len_offset", U256::from(0)),
+                ("lookup_computations_len_offset", U256::from(0)),
+                ("num_evals", U256::from(0)),
+                ("num_neg_lagranges", U256::from(0)),
+            ]
+        } else {
+            vec![
+                ("vk_digest", U256::from(0)),
+                ("num_instances", U256::from(0)),
+                ("k", U256::from(0)),
+                ("n_inv", U256::from(0)),
+                ("omega", U256::from(0)),
+                ("omega_inv", U256::from(0)),
+                ("omega_inv_to_l", U256::from(0)),
+                ("has_accumulator", U256::from(0)),
+                ("acc_offset", U256::from(0)),
+                ("num_acc_limbs", U256::from(0)),
+                ("num_acc_limb_bits", U256::from(0)),
+                ("g1_x", U256::from(0)),
+                ("g1_y", U256::from(0)),
+                ("g2_x_1", U256::from(0)),
+                ("g2_x_2", U256::from(0)),
+                ("g2_y_1", U256::from(0)),
+                ("g2_y_2", U256::from(0)),
+                ("neg_s_g2_x_1", U256::from(0)),
+                ("neg_s_g2_x_2", U256::from(0)),
+                ("neg_s_g2_y_1", U256::from(0)),
+                ("neg_s_g2_y_2", U256::from(0)),
+            ]
+        }
+    }
 
-            if separate {
-                vec![
-                    ("vk_digest", vk_digest),
-                    ("vk_mptr", U256::from(0)), // dummy vk_mptr
-                    ("vk_len", U256::from(0)),  // dummy vk_len
-                    ("num_instances", num_instances),
-                    ("num_advices_user_challenges_offset", U256::from(0)), // dummy num_advices_user_challenges_offset
-                    ("last_quotient_x_cptr", U256::from(0)), // dummy last_quotient_x_cptr
-                    ("first_quotient_x_cptr", U256::from(0)), // dummy first_quotient_x_cptr
-                    ("instance_cptr", U256::from(0)),        // dummy instance_cptr
-                    ("k", k),
-                    ("n_inv", n_inv),
-                    ("omega", omega),
-                    ("omega_inv", omega_inv),
-                    ("omega_inv_to_l", omega_inv_to_l),
-                    ("has_accumulator", has_accumulator),
-                    ("acc_offset", acc_offset),
-                    ("num_acc_limbs", num_acc_limbs),
-                    ("num_acc_limb_bits", num_acc_limb_bits),
-                    ("g1_x", g1[0]),
-                    ("g1_y", g1[1]),
-                    ("g2_x_1", g2[0]),
-                    ("g2_x_2", g2[1]),
-                    ("g2_y_1", g2[2]),
-                    ("g2_y_2", g2[3]),
-                    ("neg_s_g2_x_1", neg_s_g2[0]),
-                    ("neg_s_g2_x_2", neg_s_g2[1]),
-                    ("neg_s_g2_y_1", neg_s_g2[2]),
-                    ("neg_s_g2_y_2", neg_s_g2[3]),
-                    (
-                        "challenges_offset",
-                        U256::from(self.meta.challenge_indices.len() * 32),
-                    ),
-                    ("gate_computations_len_offset", U256::from(0)), // dummy gate_computations_len_offset
-                    ("permutation_computations_len_offset", U256::from(0)), // dummy permutation_computations_len_offset
-                    ("lookup_computations_len_offset", U256::from(0)), // dummy lookup_computations_len_offset
-                ]
-            } else {
-                vec![
-                    ("vk_digest", vk_digest),
-                    ("num_instances", num_instances),
-                    ("k", k),
-                    ("n_inv", n_inv),
-                    ("omega", omega),
-                    ("omega_inv", omega_inv),
-                    ("omega_inv_to_l", omega_inv_to_l),
-                    ("has_accumulator", has_accumulator),
-                    ("acc_offset", acc_offset),
-                    ("num_acc_limbs", num_acc_limbs),
-                    ("num_acc_limb_bits", num_acc_limb_bits),
-                    ("g1_x", g1[0]),
-                    ("g1_y", g1[1]),
-                    ("g2_x_1", g2[0]),
-                    ("g2_x_2", g2[1]),
-                    ("g2_y_1", g2[2]),
-                    ("g2_y_2", g2[3]),
-                    ("neg_s_g2_x_1", neg_s_g2[0]),
-                    ("neg_s_g2_x_2", neg_s_g2[1]),
-                    ("neg_s_g2_y_1", neg_s_g2[2]),
-                    ("neg_s_g2_y_2", neg_s_g2[3]),
-                ]
-            }
+    fn generate_vk(&self, separate: bool) -> Halo2VerifyingKey {
+        // Get the dummy constants using the new function
+        let mut constants = Self::dummy_vk_constants(separate);
+
+        // Fill in the actual values where applicable
+        let domain = self.vk.get_domain();
+        let vk_digest = fr_to_u256(vk_transcript_repr(self.vk));
+        let num_instances = U256::from(self.num_instances);
+        let k = U256::from(domain.k());
+        let n_inv = fr_to_u256(bn256::Fr::from(1 << domain.k()).invert().unwrap());
+        let omega = fr_to_u256(domain.get_omega());
+        let omega_inv = fr_to_u256(domain.get_omega_inv());
+        let omega_inv_to_l = {
+            let l = self.meta.rotation_last.unsigned_abs() as u64;
+            fr_to_u256(domain.get_omega_inv().pow_vartime([l]))
         };
+        let has_accumulator = U256::from(self.acc_encoding.is_some() as usize);
+        let acc_offset = self
+            .acc_encoding
+            .map(|acc_encoding| U256::from(acc_encoding.offset))
+            .unwrap_or_default();
+        let num_acc_limbs = self
+            .acc_encoding
+            .map(|acc_encoding| U256::from(acc_encoding.num_limbs))
+            .unwrap_or_default();
+        let num_acc_limb_bits = self
+            .acc_encoding
+            .map(|acc_encoding| U256::from(acc_encoding.num_limb_bits))
+            .unwrap_or_default();
+        let g1 = self.params.get_g()[0];
+        let g1 = g1_to_u256s(g1);
+        let g2 = g2_to_u256s(self.params.g2());
+        let neg_s_g2 = g2_to_u256s(-self.params.s_g2());
+
+        constants = constants
+            .into_iter()
+            .map(|(name, dummy_val)| {
+                let value = match name {
+                    "vk_digest" => vk_digest,
+                    "num_instances" => num_instances,
+                    "k" => k,
+                    "n_inv" => n_inv,
+                    "omega" => omega,
+                    "omega_inv" => omega_inv,
+                    "omega_inv_to_l" => omega_inv_to_l,
+                    "has_accumulator" => has_accumulator,
+                    "acc_offset" => acc_offset,
+                    "num_acc_limbs" => num_acc_limbs,
+                    "num_acc_limb_bits" => num_acc_limb_bits,
+                    "g1_x" => g1[0],
+                    "g1_y" => g1[1],
+                    "g2_x_1" => g2[0],
+                    "g2_x_2" => g2[1],
+                    "g2_y_1" => g2[2],
+                    "g2_y_2" => g2[3],
+                    "neg_s_g2_x_1" => neg_s_g2[0],
+                    "neg_s_g2_x_2" => neg_s_g2[1],
+                    "neg_s_g2_y_1" => neg_s_g2[2],
+                    "neg_s_g2_y_2" => neg_s_g2[3],
+                    "challenges_offset" => U256::from(self.meta.challenge_indices.len() * 32),
+                    "num_evals" => U256::from(self.meta.num_evals),
+                    "num_neg_lagranges" => {
+                        U256::from(self.meta.rotation_last.unsigned_abs() as usize)
+                    }
+                    _ => dummy_val,
+                };
+                (name, value)
+            })
+            .collect();
+
         let fixed_comms: Vec<(U256, U256)> = chain![self.vk.fixed_commitments()]
             .flat_map(g1_to_u256s)
             .tuples()
@@ -289,8 +329,20 @@ impl<'a> SolidityGenerator<'a> {
             return attached_vk;
         }
 
+        fn set_constant_value(constants: &mut [(&str, U256)], name: &str, value: U256) {
+            if let Some((_, val)) = constants.iter_mut().find(|(n, _)| *n == name) {
+                *val = value;
+            }
+        }
+
+        let const_expressions = expression_consts(self.vk.cs())
+            .into_iter()
+            .map(fr_to_u256)
+            .collect::<Vec<_>>();
+
         let vk_mptr_mock =
             self.estimate_static_working_memory_size(&attached_vk, Ptr::calldata(0x84));
+
         let dummy_data = Data::new(
             &self.meta,
             &attached_vk,
@@ -299,21 +351,19 @@ impl<'a> SolidityGenerator<'a> {
             true,
         );
 
-        let const_expressions = expression_consts(self.vk.cs())
-            .into_iter()
-            .map(fr_to_u256)
-            .collect::<Vec<_>>();
-
         let mut vk_lookup_const_table_dummy: HashMap<ruint::Uint<256, 4>, Ptr> = HashMap::new();
+
         let offset = vk_mptr_mock
             + (attached_vk.constants.len() * 0x20)
             + (attached_vk.fixed_comms.len() + attached_vk.permutation_comms.len()) * 0x40;
+
         // keys to the map are the values of vk.const_expressions and values are the memory location of the vk.const_expressions.
         const_expressions.iter().enumerate().for_each(|(idx, _)| {
             let mptr = offset + (0x20 * idx);
             let mptr = Ptr::memory(mptr);
             vk_lookup_const_table_dummy.insert(const_expressions[idx], mptr);
         });
+
         let evaluator_dummy = EvaluatorVK::new(
             self.vk.cs(),
             &self.meta,
@@ -321,20 +371,18 @@ impl<'a> SolidityGenerator<'a> {
             vk_lookup_const_table_dummy,
         );
 
-        let instance_cptr = U256::from((self.meta.proof_len(self.scheme)) + 0xa4);
-
-        // set instance_cptr it at position 7 of the constants.
-        constants[7].1 = instance_cptr;
-
-        let first_quotient_x_cptr = dummy_data.quotient_comm_cptr;
-
-        // set first_quotient_x_cptr at position 6 of the constants.
-        constants[6].1 = U256::from(first_quotient_x_cptr.value().as_usize());
-
-        let last_quotient_x_cptr = first_quotient_x_cptr + 2 * (self.meta.num_quotients - 1);
-
-        // set last_quotient_x_cptr at position 5 of the constants.
-        constants[5].1 = U256::from(last_quotient_x_cptr.value().as_usize());
+        // Fill in the gate computations with dummy values. (maintains the correct shape)
+        let mut cumulative_length = 0;
+        let dummy_gate_computations: Vec<(Vec<U256>, usize)> =
+            chain![evaluator_dummy.gate_computations()]
+                .map(|lines| {
+                    let operations = lines.iter().map(|_line| U256::from(0)).collect::<Vec<_>>();
+                    let length = operations.len();
+                    let gate_computation = (operations, cumulative_length);
+                    cumulative_length += length;
+                    gate_computation
+                })
+                .collect();
 
         let num_advices = self.meta.num_advices();
         let num_user_challenges = self.meta.num_challenges();
@@ -353,47 +401,54 @@ impl<'a> SolidityGenerator<'a> {
             })
             .collect_vec();
 
-        // Fill in the gate computations with dummy values. (maintains the correct shape)
-        let mut cumulative_length = 0;
-        let dummy_gate_computations: Vec<(Vec<U256>, usize)> =
-            chain![evaluator_dummy.gate_computations()]
-                .map(|lines| {
-                    let operations = lines.iter().map(|_line| U256::from(0)).collect::<Vec<_>>();
-                    let length = operations.len();
-                    let gate_computation = (operations, cumulative_length);
-                    cumulative_length += length;
-                    gate_computation
-                })
-                .collect();
+        // Update constants
 
+        let first_quotient_x_cptr = dummy_data.quotient_comm_cptr;
+        let last_quotient_x_cptr = first_quotient_x_cptr + 2 * (self.meta.num_quotients - 1);
+        let instance_cptr = U256::from(self.meta.proof_len(self.scheme) + 0xa4);
         let num_advices_user_challenges_offset = (constants.len() * 0x20)
             + (fixed_comms.len() + permutation_comms.len()) * 0x40
             + (const_expressions.len() * 0x20);
-
-        // set the num_advices_user_challenges_offset at position 4
-        constants[4] = (
-            "num_advices_user_challenges_offset",
-            U256::from(num_advices_user_challenges_offset),
-        );
-
         let gate_computations_len_offset = num_advices_user_challenges_offset
             + ((num_advices_user_challenges.len() * 0x40) + 0x20);
-
-        // set the gate_computations_len_offset at position 28.
-        constants[28].1 = U256::from(gate_computations_len_offset);
-
         let permutations_computations_len_offset = gate_computations_len_offset
             + (0x20 * (dummy_gate_computations.len() + cumulative_length) + 0x20);
-
-        // set the gate_computations_len_offset at position 28.
-        constants[29].1 = U256::from(permutations_computations_len_offset);
-
         let lookup_computations_len_offset = permutations_computations_len_offset
             + (0x20 * evaluator_dummy.permutation_computations().len());
 
-        // set the lookup_computations_len_offset at position 30.
-        constants[30].1 = U256::from(lookup_computations_len_offset);
+        set_constant_value(&mut constants, "instance_cptr", instance_cptr);
+        set_constant_value(
+            &mut constants,
+            "first_quotient_x_cptr",
+            U256::from(first_quotient_x_cptr.value().as_usize()),
+        );
+        set_constant_value(
+            &mut constants,
+            "last_quotient_x_cptr",
+            U256::from(last_quotient_x_cptr.value().as_usize()),
+        );
+        set_constant_value(
+            &mut constants,
+            "num_advices_user_challenges_offset",
+            U256::from(num_advices_user_challenges_offset),
+        );
+        set_constant_value(
+            &mut constants,
+            "gate_computations_len_offset",
+            U256::from(gate_computations_len_offset),
+        );
+        set_constant_value(
+            &mut constants,
+            "permutation_computations_len_offset",
+            U256::from(permutations_computations_len_offset),
+        );
+        set_constant_value(
+            &mut constants,
+            "lookup_computations_len_offset",
+            U256::from(lookup_computations_len_offset),
+        );
 
+        // Recreate the vk with the correct shape
         let mut vk = Halo2VerifyingKey {
             constants,
             fixed_comms,
@@ -405,8 +460,15 @@ impl<'a> SolidityGenerator<'a> {
             permutation_computations: evaluator_dummy.permutation_computations(),
             lookup_computations: evaluator_dummy.lookup_computations(0),
         };
+
         // Now generate the real vk_mptr with a vk that has the correct length
         let vk_mptr = self.estimate_static_working_memory_size(&vk, Ptr::calldata(0x84));
+
+        // replace the mock vk_mptr with the real vk_mptr
+        set_constant_value(&mut vk.constants, "vk_mptr", U256::from(vk_mptr));
+        // replace the mock vk_len with the real vk_len
+        let vk_len = vk.len();
+        set_constant_value(&mut vk.constants, "vk_len", U256::from(vk_len));
 
         // Generate the real data.
         let data = Data::new(
@@ -416,18 +478,15 @@ impl<'a> SolidityGenerator<'a> {
             Ptr::calldata(0x84),
             true,
         );
-        // replace the mock vk_mptr with the real vk_mptr
-        vk.constants[1].1 = U256::from(vk_mptr);
-        // replace the mock vk_len with the real vk_len
-        let vk_len = vk.len();
-        vk.constants[2].1 = U256::from(vk_len);
 
         // Regenerate the gate computations with the correct offsets.
         let mut vk_lookup_const_table: HashMap<ruint::Uint<256, 4>, Ptr> = HashMap::new();
-        // create hashmap of vk.const_expressions values to its vk memory location.
+
+        // create a hashmap of vk.const_expressions values to its vk memory location.
         let offset = vk_mptr
             + (vk.constants.len() * 0x20)
             + (vk.fixed_comms.len() + vk.permutation_comms.len()) * 0x40;
+
         // keys to the map are the values of vk.const_expressions and values are the memory location of the vk.const_expressions.
         vk.const_expressions
             .iter()
@@ -541,6 +600,12 @@ impl<'a> SolidityGenerator<'a> {
             });
 
         let data = Data::new(&self.meta, &vk, vk_mptr, proof_cptr, true);
+        let dummy_constants = Self::dummy_vk_constants(true);
+        let vk_const_offsets: HashMap<&'static str, U256> = dummy_constants
+            .iter()
+            .enumerate()
+            .map(|(idx, &(key, _))| (key, U256::from(idx * 32)))
+            .collect();
         // iterate through the quotient_eval_numer_computations and determine longest Vec<String> within the Vec<Vec<String>>.
         // TODO: Use this to estimate static working memory size
         // let quotient_eval_numer_computations_longest = quotient_eval_numer_computations
@@ -560,9 +625,8 @@ impl<'a> SolidityGenerator<'a> {
 
         Halo2VerifierReusable {
             scheme: self.scheme,
-            num_neg_lagranges: self.meta.rotation_last.unsigned_abs() as usize,
-            num_evals: self.meta.num_evals,
             pcs_computations,
+            vk_const_offsets,
         }
     }
 

@@ -139,16 +139,16 @@ contract Halo2Verifier {
             function ec_pairing(success, vk_mptr, lhs_x, lhs_y, rhs_x, rhs_y) -> ret {
                 mstore(0x00, lhs_x)
                 mstore(0x20, lhs_y)
-                mstore(0x40, mload(add(vk_mptr, 0x0260)))
-                mstore(0x60, mload(add(vk_mptr, 0x0280)))
-                mstore(0x80, mload(add(vk_mptr, 0x02a0)))
-                mstore(0xa0, mload(add(vk_mptr, 0x02c0)))
+                mstore(0x40, mload(add(vk_mptr, {{ vk_const_offsets["g2_x_1"]|hex() }})))
+                mstore(0x60, mload(add(vk_mptr, {{ vk_const_offsets["g2_x_2"]|hex() }})))
+                mstore(0x80, mload(add(vk_mptr, {{ vk_const_offsets["g2_y_1"]|hex() }})))
+                mstore(0xa0, mload(add(vk_mptr, {{ vk_const_offsets["g2_y_2"]|hex() }})))
                 mstore(0xc0, rhs_x)
                 mstore(0xe0, rhs_y)
-                mstore(0x100, mload(add(vk_mptr, 0x02e0)))
-                mstore(0x120, mload(add(vk_mptr, 0x0300)))
-                mstore(0x140, mload(add(vk_mptr, 0x0320)))
-                mstore(0x160, mload(add(vk_mptr, 0x0340)))
+                mstore(0x100, mload(add(vk_mptr, {{ vk_const_offsets["neg_s_g2_x_1"]|hex() }})))
+                mstore(0x120, mload(add(vk_mptr, {{ vk_const_offsets["neg_s_g2_x_2"]|hex() }})))
+                mstore(0x140, mload(add(vk_mptr, {{ vk_const_offsets["neg_s_g2_y_1"]|hex() }})))
+                mstore(0x160, mload(add(vk_mptr, {{ vk_const_offsets["neg_s_g2_y_2"]|hex() }})))
                 ret := and(success, staticcall(gas(), 0x08, 0x00, 0x180, 0x00, 0x20))
                 ret := and(ret, mload(0x00))
             }
@@ -278,13 +278,13 @@ contract Halo2Verifier {
                 // Copy full vk into memory
                 extcodecopy(vk, vk_mptr, 0x00, vk_len)
 
-                let instance_cptr := mload(add(vk_mptr, 0xe0))
+                let instance_cptr := mload(add(vk_mptr, {{ vk_const_offsets["instance_cptr"]|hex() }}))
 
                 // Check valid length of proof
                 success := and(success, eq(sub(instance_cptr, 0xa4), calldataload(PROOF_LEN_CPTR)))
 
                 // Check valid length of instances
-                let num_instances := mload(add(vk_mptr,0x60))
+                let num_instances := mload(add(vk_mptr,{{ vk_const_offsets["num_instances"]|hex() }}))
                 success := and(success, eq(num_instances, calldataload(sub(instance_cptr,0x20))))
 
                 // Read instances and witness commitments and generate challenges
@@ -304,8 +304,8 @@ contract Halo2Verifier {
                 let proof_cptr := PROOF_CPTR
                 let challenge_mptr := add(vk_mptr, vk_len) // challenge_mptr is at the end of vk in memory
                 // Set the theta_mptr (vk_mptr + vk_len + challenges_length)
-                theta_mptr := add(challenge_mptr, mload(add(vk_mptr, 0x0360)))
-                let num_advices_ptr := add(vk_mptr, mload(add(vk_mptr, 0x80)))
+                theta_mptr := add(challenge_mptr, mload(add(vk_mptr, {{ vk_const_offsets["challenges_offset"]|hex() }})))
+                let num_advices_ptr := add(vk_mptr, mload(add(vk_mptr, {{ vk_const_offsets["num_advices_user_challenges_offset"]|hex() }})))
                 let num_advices_len := mload(num_advices_ptr)
                 let advices_ptr := add(num_advices_ptr, 0x20) // start of advices
                 let challenges_ptr := add(advices_ptr, 0x20) // start of challenges
@@ -331,7 +331,7 @@ contract Halo2Verifier {
 
                 // Read evaluations
                 for
-                    { let proof_cptr_end := add(proof_cptr, {{ (32 * num_evals)|hex() }}) }
+                    { let proof_cptr_end := add(proof_cptr, mul(0x20, mload(add(vk_mptr, {{ vk_const_offsets["num_evals"]|hex() }})))) } // num_evals
                     lt(proof_cptr, proof_cptr_end)
                     {}
                 {
@@ -361,11 +361,11 @@ contract Halo2Verifier {
                 extcodecopy(vk, vk_mptr, 0x00, vk_len)
 
                 // Read accumulator from instances
-                if mload(add(vk_mptr, 0x01a0)) {
-                    let num_limbs := mload(add(vk_mptr, 0x01e0))
-                    let num_limb_bits := mload(add(vk_mptr, 0x0200))
+                if mload(add(vk_mptr, {{ vk_const_offsets["has_accumulator"]|hex() }})) {
+                    let num_limbs := mload(add(vk_mptr, {{ vk_const_offsets["num_acc_limbs"]|hex() }}))
+                    let num_limb_bits := mload(add(vk_mptr, {{ vk_const_offsets["num_acc_limb_bits"]|hex() }}))
 
-                    let cptr := add(mload(add(vk_mptr, 0xe0)), mul(mload(add(vk_mptr, 0x01c0)), 0x20))
+                    let cptr := add(mload(add(vk_mptr, {{ vk_const_offsets["instance_cptr"]|hex() }})), mul(mload(add(vk_mptr, {{ vk_const_offsets["acc_offset"]|hex() }})), 0x20))
                     let lhs_y_off := mul(num_limbs, 0x20)
                     let rhs_x_off := mul(lhs_y_off, 2)
                     let rhs_y_off := mul(lhs_y_off, 3)
@@ -408,7 +408,7 @@ contract Halo2Verifier {
 
             // Compute lagrange evaluations and instance evaluation
             {
-                let k := mload(add(vk_mptr, 0x100))
+                let k := mload(add(vk_mptr, {{ vk_const_offsets["k"]|hex() }}))
                 let x := mload(add(theta_mptr, 0x80))
                 let x_n := x
                 for
@@ -419,16 +419,17 @@ contract Halo2Verifier {
                     x_n := mulmod(x_n, x_n, R)
                 }
 
-                let omega := mload(add(vk_mptr, 0x140))
+                let omega := mload(add(vk_mptr, {{ vk_const_offsets["omega"]|hex() }}))
                 let x_n_mptr := add(theta_mptr, 0x180)
                 let mptr := x_n_mptr
-                let num_instances := mload(add(vk_mptr,0x60))
-                let mptr_end := add(mptr, mul(0x20, add(num_instances, {{ num_neg_lagranges }})))
+                let num_instances := mload(add(vk_mptr, {{ vk_const_offsets["num_instances"]|hex() }}))
+                let num_neg_lagranges := mload(add(vk_mptr, {{ vk_const_offsets["num_neg_lagranges"]|hex() }}))
+                let mptr_end := add(mptr, mul(0x20, add(num_instances, num_neg_lagranges)))
                 if iszero(num_instances) {
                     mptr_end := add(mptr_end, 0x20)
                 }
                 for
-                    { let pow_of_omega := mload(add(vk_mptr, 0x180)) }
+                    { let pow_of_omega := mload(add(vk_mptr, {{ vk_const_offsets["omega_inv_to_l"]|hex() }})) }
                     lt(mptr, mptr_end)
                     { mptr := add(mptr, 0x20) }
                 {
@@ -440,9 +441,9 @@ contract Halo2Verifier {
                 success := batch_invert(success, x_n_mptr, add(mptr_end, 0x20))
 
                 mptr := x_n_mptr
-                let l_i_common := mulmod(x_n_minus_1, mload(add(vk_mptr, 0x120)),R)
+                let l_i_common := mulmod(x_n_minus_1, mload(add(vk_mptr, {{ vk_const_offsets["n_inv"]|hex() }})),R)
                 for
-                    { let pow_of_omega := mload(add(vk_mptr, 0x180)) }
+                    { let pow_of_omega := mload(add(vk_mptr, {{ vk_const_offsets["omega_inv_to_l"]|hex() }})) }
                     lt(mptr, mptr_end)
                     { mptr := add(mptr, 0x20) }
                 {
@@ -453,7 +454,7 @@ contract Halo2Verifier {
                 let l_blind := mload(add(x_n_mptr, 0x20))
                 let l_i_cptr := add(x_n_mptr, 0x40)
                 for
-                    { let l_i_cptr_end := add(x_n_mptr, {{ (num_neg_lagranges * 32)|hex() }}) }
+                    { let l_i_cptr_end := add(x_n_mptr, mul(0x20, num_neg_lagranges)) }
                     lt(l_i_cptr, l_i_cptr_end)
                     { l_i_cptr := add(l_i_cptr, 0x20) }
                 {
@@ -463,7 +464,7 @@ contract Halo2Verifier {
                 let instance_eval := 0
                 for
                     {
-                        let instance_cptr := mload(add(vk_mptr, 0xe0))
+                        let instance_cptr := mload(add(vk_mptr, {{ vk_const_offsets["instance_cptr"]|hex() }}))
                         let instance_cptr_end := add(instance_cptr, mul(0x20, num_instances))
                     }
                     lt(instance_cptr, instance_cptr_end)
@@ -477,7 +478,7 @@ contract Halo2Verifier {
 
                 let x_n_minus_1_inv := mload(mptr_end)
                 let l_last := mload(x_n_mptr)
-                let l_0 := mload(add(x_n_mptr, {{ (num_neg_lagranges * 32)|hex() }}))
+                let l_0 := mload(add(x_n_mptr, mul(0x20, num_neg_lagranges)))
 
                 mstore(x_n_mptr, x_n)
                 mstore(add(theta_mptr, 0x1a0), x_n_minus_1_inv)
@@ -697,13 +698,13 @@ contract Halo2Verifier {
 
             // Compute quotient commitment
             {
-                mstore(0x00, calldataload(mload(add(vk_mptr, 0xa0))))
-                mstore(0x20, calldataload(add(mload(add(vk_mptr, 0xa0)), 0x20)))
+                mstore(0x00, calldataload(mload(add(vk_mptr, {{ vk_const_offsets["last_quotient_x_cptr"]|hex() }}))))
+                mstore(0x20, calldataload(add(mload(add(vk_mptr, {{ vk_const_offsets["last_quotient_x_cptr"]|hex() }})), 0x20)))
                 let x_n := mload(add(theta_mptr, 0x180))
                 for
                     {
-                        let cptr := sub(mload(add(vk_mptr, 0xa0)), 0x40)
-                        let cptr_end := sub(mload(add(vk_mptr, 0xc0)), 0x40)
+                        let cptr := sub(mload(add(vk_mptr, {{ vk_const_offsets["last_quotient_x_cptr"]|hex() }})), 0x40)
+                        let cptr_end := sub(mload(add(vk_mptr, {{ vk_const_offsets["first_quotient_x_cptr"]|hex() }})), 0x40)
                     }
                     lt(cptr_end, cptr)
                     {}
@@ -728,7 +729,7 @@ contract Halo2Verifier {
             }
 
             // Random linear combine with accumulator
-            if mload(add(vk_mptr, 0x01a0)) {
+            if mload(add(vk_mptr, {{ vk_const_offsets["first_quotient_x_cptr"]|hex() }})) {
                 mstore(0x00, mload(add(theta_mptr, 0x100)))
                 mstore(0x20, mload(add(theta_mptr, 0x120)))
                 mstore(0x40, mload(add(theta_mptr, 0x140)))
