@@ -341,7 +341,7 @@ impl<'a> SolidityGenerator<'a> {
             .collect::<Vec<_>>();
 
         let vk_mptr_mock =
-            self.estimate_static_working_memory_size(&attached_vk, Ptr::calldata(0x84));
+            self.estimate_static_working_memory_size(&attached_vk, Ptr::calldata(0x84), false);
 
         let dummy_data = Data::new(
             &self.meta,
@@ -462,7 +462,7 @@ impl<'a> SolidityGenerator<'a> {
         };
 
         // Now generate the real vk_mptr with a vk that has the correct length
-        let vk_mptr = self.estimate_static_working_memory_size(&vk, Ptr::calldata(0x84));
+        let vk_mptr = self.estimate_static_working_memory_size(&vk, Ptr::calldata(0x84), true);
 
         // replace the mock vk_mptr with the real vk_mptr
         set_constant_value(&mut vk.constants, "vk_mptr", U256::from(vk_mptr));
@@ -528,7 +528,7 @@ impl<'a> SolidityGenerator<'a> {
         let proof_len_cptr = Ptr::calldata(0x6014F51944);
 
         let vk = self.generate_vk(false);
-        let vk_m = self.estimate_static_working_memory_size(&vk, proof_cptr);
+        let vk_m = self.estimate_static_working_memory_size(&vk, proof_cptr, false);
         let vk_mptr = Ptr::memory(vk_m);
         let data = Data::new(&self.meta, &vk, vk_mptr, proof_cptr, false);
 
@@ -581,7 +581,7 @@ impl<'a> SolidityGenerator<'a> {
         let proof_cptr = Ptr::calldata(0x84);
 
         let vk = self.generate_vk(true);
-        let vk_m = self.estimate_static_working_memory_size(&vk, proof_cptr);
+        let vk_m = self.estimate_static_working_memory_size(&vk, proof_cptr, true);
         let vk_mptr = Ptr::memory(vk_m);
         // if separate then create a hashmap of vk.const_expressions values to its vk memory location.
         let mut vk_lookup_const_table: HashMap<ruint::Uint<256, 4>, Ptr> = HashMap::new();
@@ -606,17 +606,6 @@ impl<'a> SolidityGenerator<'a> {
             .enumerate()
             .map(|(idx, &(key, _))| (key, U256::from(idx * 32)))
             .collect();
-        // iterate through the quotient_eval_numer_computations and determine longest Vec<String> within the Vec<Vec<String>>.
-        // TODO: Use this to estimate static working memory size
-        // let quotient_eval_numer_computations_longest = quotient_eval_numer_computations
-        //     .iter()
-        //     .max_by_key(|x| x.len())
-        //     .unwrap()
-        //     .clone();
-        // println!(
-        //     "longest computation: {:?}",
-        //     quotient_eval_numer_computations_longest.len()
-        // );
 
         let pcs_computations = match self.scheme {
             Bdfg21 => bdfg21_computations(&self.meta, &data, true),
@@ -634,12 +623,12 @@ impl<'a> SolidityGenerator<'a> {
         &self,
         vk: &Halo2VerifyingKey,
         proof_cptr: Ptr,
+        separate: bool,
     ) -> usize {
-        // TODO add a check for the amount of memory required for the compute quotient evavluation
+        let mock_vk_mptr = Ptr::memory(0x100000);
+        let mock = Data::new(&self.meta, vk, mock_vk_mptr, proof_cptr, false);
         let pcs_computation = match self.scheme {
             Bdfg21 => {
-                let mock_vk_mptr = Ptr::memory(0x100000);
-                let mock = Data::new(&self.meta, vk, mock_vk_mptr, proof_cptr, false);
                 let (superset, sets) = rotation_sets(&queries(&self.meta, &mock));
                 let num_coeffs = sets.iter().map(|set| set.rots().len()).sum::<usize>();
                 2 * (1 + num_coeffs) + 6 + 2 * superset.len() + 1 + 3 * sets.len()
@@ -647,7 +636,7 @@ impl<'a> SolidityGenerator<'a> {
             Gwc19 => unimplemented!(),
         };
 
-        itertools::max([
+        let mut fsm_usage = itertools::max([
             // Keccak256 input (can overwrite vk)
             itertools::max(chain![
                 self.meta.num_advices().into_iter().map(|n| n * 2 + 1),
@@ -661,7 +650,25 @@ impl<'a> SolidityGenerator<'a> {
             12,
         ])
         .unwrap()
-            * 0x20
+            * 0x20;
+        if separate {
+            let mut vk_lookup_const_table_dummy: HashMap<ruint::Uint<256, 4>, Ptr> = HashMap::new();
+            let const_expressions = expression_consts(self.vk.cs())
+                .into_iter()
+                .map(fr_to_u256)
+                .collect::<Vec<_>>();
+            const_expressions.iter().enumerate().for_each(|(idx, _)| {
+                let mptr = 0x20 * idx;
+                let mptr = Ptr::memory(mptr);
+                vk_lookup_const_table_dummy.insert(const_expressions[idx], mptr);
+            });
+            let evaluator =
+                EvaluatorVK::new(self.vk.cs(), &self.meta, &mock, vk_lookup_const_table_dummy);
+
+            let expression_eval_computations = evaluator.quotient_eval_fsm_usage();
+            fsm_usage = itertools::max([fsm_usage, expression_eval_computations]).unwrap();
+        };
+        fsm_usage
     }
 }
 

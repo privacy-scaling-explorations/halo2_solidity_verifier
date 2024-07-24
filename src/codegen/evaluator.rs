@@ -206,7 +206,6 @@ where
                             "let table"
                         ]
                         .map(str::to_string),
-                        // TODO: break this into it's own function on the solidity side of things
                         code_block::<1, false>(chain![
                             table_lines,
                             [format!("table := {table_0}")],
@@ -215,8 +214,6 @@ where
                             )),
                             [format!("table := addmod(table, beta, R)")],
                         ]),
-                        // TODO: break this into it's own function on the solidity side of things,
-                        // calling it within a for loop.
                         izip!(0.., inputs.into_iter()).flat_map(|(idx, (input_lines, inputs))| {
                             let (input_0, rest_inputs) = inputs.split_first().unwrap();
                             let ident = format!("input_{idx}");
@@ -263,7 +260,6 @@ where
                             ]
                         }),
                         [format!("let lhs"), format!("let rhs")],
-                        // TODO: break this into it's own function on the solidity side of things
                         (0..num_inputs).flat_map(|i| {
                             assert_ne!(num_inputs, 0);
                             if num_inputs == 1 {
@@ -284,7 +280,6 @@ where
                                 ])
                             }
                         }),
-                        // TODO: break this into it's own function on the solidity side of things
                         code_block::<1, false>(chain![
                             [format!("let tmp := input_0")],
                             (1..num_inputs)
@@ -696,6 +691,79 @@ where
         }
     }
 
+    #[cfg(not(feature = "mv-lookup"))]
+    pub fn quotient_eval_fsm_usage(&self) -> usize {
+        let gate_computation_longest = chain![self.gate_computations()]
+            .max_by_key(|x| x.len())
+            .unwrap()
+            .clone()
+            .len();
+        let gate_computation_fsm_usage = gate_computation_longest * 0x20;
+
+        let permutation_computation_fsm_usage = (self.data.permutation_z_evals.len() * 0x20) + 0x40;
+
+        // TODO implement the non mv lookup version of this calculation.
+        let input_expressions_fsm_usage = 0;
+
+        itertools::max([
+            gate_computation_fsm_usage,
+            permutation_computation_fsm_usage,
+            input_expressions_fsm_usage,
+        ])
+        .unwrap()
+    }
+
+    #[cfg(feature = "mv-lookup")]
+    pub fn quotient_eval_fsm_usage(&self) -> usize {
+        let gate_computation_longest = chain![self.gate_computations()]
+            .max_by_key(|x| x.len())
+            .unwrap()
+            .clone()
+            .len();
+        let gate_computation_fsm_usage = gate_computation_longest * 0x20;
+
+        // 0x40 offset b/c that is where the fsm pointer starts in the permutations computation code block
+        let permutation_computation_fsm_usage = (self.data.permutation_z_evals.len() * 0x20) + 0x40;
+
+        let evaluate_fsm_usage = |idx: usize, expressions: &Vec<_>| {
+            let offset = 0xa0; // offset to store theta offset ptrs used
+                               // in the lookup computations.
+            let fsm = (0x20 * idx) + offset;
+            self.set_static_mem_ptr(fsm);
+            let max_fsm_usage = expressions
+                .iter()
+                .map(|expression| self.evaluate_encode(expression))
+                .fold(fsm, |mut acc, result| {
+                    acc += result.0.len() * 0x20;
+                    acc
+                });
+            self.reset();
+            max_fsm_usage
+        };
+
+        let input_expressions_fsm_usage = self
+            .cs
+            .lookups()
+            .iter()
+            .map(|lookup| {
+                let inputs_iter = lookup.input_expressions().iter().enumerate();
+                let fsm_usages = inputs_iter
+                    .clone()
+                    .map(|(idx, expressions)| evaluate_fsm_usage(idx, expressions))
+                    .collect_vec();
+                *fsm_usages.iter().max().unwrap()
+            })
+            .collect_vec();
+        let input_expressions_fsm_usage = *input_expressions_fsm_usage.iter().max().unwrap();
+
+        itertools::max([
+            gate_computation_fsm_usage,
+            permutation_computation_fsm_usage,
+            input_expressions_fsm_usage,
+        ])
+        .unwrap()
+    }
+
     #[cfg(feature = "mv-lookup")]
     pub fn lookup_computations(&self, offset: usize) -> LookupsDataEncoded {
         let evaluate_table = |expressions: &Vec<_>| {
@@ -729,8 +797,6 @@ where
                     acc.1.push(result.1);
                     acc
                 });
-            // TODO: Add this free memory pointer
-            // incrementation to the estimate free static memory function.
             self.reset();
             (lines, inputs)
         };
@@ -759,12 +825,12 @@ where
             .map(|(inputs_tables, evals)| {
                 let (inputs, (table_lines, _)) = inputs_tables.clone();
                 let evals = self.encode_triplet_evaluation_word(evals);
-                let table_lines = self.encode_pack_ptrs(&table_lines);
+                let table_lines = self.encode_pack_ptrs(&table_lines).unwrap();
                 let mut inner_accumulator = 0;
                 let inputs: Vec<InputsEncoded> = inputs
                     .iter()
                     .map(|(input_lines, inputs)| {
-                        let inputs = self.encode_pack_ptrs(inputs);
+                        let inputs = self.encode_pack_ptrs(inputs).unwrap();
                         let res = InputsEncoded {
                             expression: input_lines.clone(),
                             vars: inputs,
@@ -879,12 +945,16 @@ where
 
     // pack as many as 16 ptrs into a single word
     // throws an error if the number of ptrs is greater than 16
-    fn encode_pack_ptrs(&self, ptrs: &[U256]) -> U256 {
+    fn encode_pack_ptrs(&self, ptrs: &[U256]) -> Result<U256, &'static str> {
+        if ptrs.len() > 16 {
+            return Err("Number of pointers cannot be greater than 16");
+        }
+
         let mut packed = U256::from(0);
         for (i, ptr) in ptrs.iter().enumerate() {
             packed |= *ptr << (i * 16);
         }
-        packed
+        Ok(packed)
     }
 
     fn evaluate_and_reset(&self, expression: &Expression<F>) -> Vec<U256> {

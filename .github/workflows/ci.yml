@@ -16,10 +16,9 @@ jobs:
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: nightly-2024-02-06
-          override: true
-          components: rustfmt, clippy
-
+          toolchain: 1.77.2
+          profile: minimal
+          
       - uses: Swatinem/rust-cache@v1
         with:
           cache-on-failure: true
