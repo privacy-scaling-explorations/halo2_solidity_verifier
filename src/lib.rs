@@ -2,6 +2,7 @@
 //!
 //! [`halo2`]: http://github.com/privacy-scaling-explorations/halo2
 
+#![feature(diagnostic_namespace)]
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 #![deny(rustdoc::broken_intra_doc_links)]
