@@ -16,17 +16,16 @@ jobs:
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
-          profile: minimal
           toolchain: nightly-2024-02-06
           override: true
-          components: rustfmt, clippy, rust-src
+          components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v1
         with:
           cache-on-failure: true
 
       - name: Install solc
-        run: cargo install svm-rs && svm install 0.8.26 && svm use 0.8.26 && solc --version
+        run: (hash svm 2>/dev/null || cargo install svm-rs) && svm install 0.8.26 && svm use 0.8.26 && solc --version
 
       - name: Run test
         run: cargo test --workspace --all-features --all-targets -- --nocapture
