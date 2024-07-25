@@ -531,6 +531,36 @@ pub enum OperandMem {
     StaticMemory,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct GateEncoded {
+    pub(crate) expression: Vec<U256>,
+    pub(crate) acc: usize,
+}
+
+impl GateEncoded {
+    pub fn len(&self) -> usize {
+        self.expression.len()
+    }
+}
+
+// Holds the encoded data stored in the separate VK
+// needed to perform the gate computations of
+// the quotient evaluation portion of the reusable verifier.
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct GateDataEncoded {
+    pub(crate) gates: Vec<GateEncoded>,
+}
+
+impl GateDataEncoded {
+    pub fn len(&self) -> usize {
+        if self == &Self::default() {
+            0
+        } else {
+            1 + self.gates.len() + self.gates.iter().map(GateEncoded::len).sum::<usize>()
+        }
+    }
+}
+
 // Holds the encoded data stored in the separate VK
 // needed to perform the permutation computations of
 // the quotient evaluation portion of the reusable verifier.
@@ -650,13 +680,29 @@ where
         }
     }
 
-    pub fn gate_computations(&self) -> Vec<Vec<U256>> {
-        self.cs
+    pub fn gate_computations(&self) -> GateDataEncoded {
+        let res: Vec<Vec<U256>> = self
+            .cs
             .gates()
             .iter()
             .flat_map(Gate::polynomials)
             .map(|expression| self.evaluate_and_reset(expression))
-            .collect()
+            .collect();
+        let mut cumulative_length = 0;
+        let gate_computations: Vec<GateEncoded> = chain![res]
+            .map(|lines| {
+                let length = lines.len();
+                let gate_computation = GateEncoded {
+                    expression: lines,
+                    acc: cumulative_length,
+                };
+                cumulative_length += length;
+                gate_computation
+            })
+            .collect();
+        GateDataEncoded {
+            gates: gate_computations,
+        }
     }
 
     pub fn permutation_computations(&self) -> PermutationDataEncoded {
@@ -693,7 +739,7 @@ where
 
     #[cfg(not(feature = "mv-lookup"))]
     pub fn quotient_eval_fsm_usage(&self) -> usize {
-        let gate_computation_longest = chain![self.gate_computations()]
+        let gate_computation_longest = chain![self.gate_computations().gates]
             .max_by_key(|x| x.len())
             .unwrap()
             .clone()
@@ -715,7 +761,7 @@ where
 
     #[cfg(feature = "mv-lookup")]
     pub fn quotient_eval_fsm_usage(&self) -> usize {
-        let gate_computation_longest = chain![self.gate_computations()]
+        let gate_computation_longest = chain![self.gate_computations().gates]
             .max_by_key(|x| x.len())
             .unwrap()
             .clone()

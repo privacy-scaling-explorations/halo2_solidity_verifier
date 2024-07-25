@@ -7,7 +7,7 @@ use ruint::aliases::U256;
 use std::collections::HashMap;
 use std::fmt;
 
-use super::evaluator::{LookupsDataEncoded, PermutationDataEncoded};
+use super::evaluator::{GateDataEncoded, LookupsDataEncoded, PermutationDataEncoded};
 
 #[derive(Template)]
 #[template(path = "Halo2VerifyingKey.sol")]
@@ -17,8 +17,7 @@ pub(crate) struct Halo2VerifyingKey {
     pub(crate) fixed_comms: Vec<(U256, U256)>,
     pub(crate) permutation_comms: Vec<(U256, U256)>,
     pub(crate) const_expressions: Vec<U256>,
-    pub(crate) gate_computations: Vec<(Vec<U256>, usize)>,
-    pub(crate) gate_computations_total_length: usize,
+    pub(crate) gate_computations: GateDataEncoded,
     pub(crate) permutation_computations: PermutationDataEncoded,
     pub(crate) lookup_computations: LookupsDataEncoded,
 }
@@ -29,10 +28,7 @@ impl Halo2VerifyingKey {
             + (self.fixed_comms.len() + self.permutation_comms.len()) * 0x40
             + (self.const_expressions.len() * 0x20)
             + ((self.num_advices_user_challenges.len() * 0x40) + 0x20)
-            // The length words of the inner vector + length word of the outer vector
-            + (self.gate_computations.len() * 0x20 + 0x20)
-            // Sum up the lengths of al the nested vectors
-            + (self.gate_computations_total_length * 0x20)
+            + (self.gate_computations.len() * 0x20)
             + (self.permutation_computations.len() * 0x20)
             + (self.lookup_computations.len() * 0x20)
     }

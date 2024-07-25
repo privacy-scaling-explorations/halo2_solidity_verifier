@@ -30,22 +30,22 @@ contract Halo2VerifyingKey {
             mstore({{ (32 * (offset + 2 * loop.index0 + 1))|hex_padded(4) }}, {{ y|hex_padded(64) }}) // user_challenges[{{ loop.index0 }}].y
             {%- endfor %}
             {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 %}
-            mstore({{ (32 * offset)|hex_padded(4) }}, {{ (32 * gate_computations.len())|hex_padded(64) }}) // gate_computations length
-            {%- for (gate_computation, acc) in gate_computations %}
+            mstore({{ (32 * offset)|hex_padded(4) }}, {{ (32 * gate_computations.gates.len())|hex_padded(64) }}) // gate_computations length
+            {%- for gate in gate_computations.gates %}
             {%- let base_offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 2 %}
-            {%- let offset = base_offset + loop.index0 + acc %}
-            mstore({{ (32 * offset)|hex_padded(4) }}, {{ (32 * gate_computation.len())|hex_padded(64) }}) // gate_computation length[{{ loop.index0 }}]
-            {%- for operation in gate_computation %}
+            {%- let offset = base_offset + loop.index0 + gate.acc %}
+            mstore({{ (32 * offset)|hex_padded(4) }}, {{ (32 * gate.expression.len())|hex_padded(64) }}) // gate_computation length[{{ loop.index0 }}]
+            {%- for operation in gate.expression %}
             {%- let offset = offset + loop.index0 + 1 %}
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ operation|hex_padded(64) }}) // gate_computation[{{ loop.index0 }}]
             {%- endfor %}
             {%- endfor %}
-            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 2 + gate_computations.len() + gate_computations_total_length %}
+            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 + gate_computations.len() %}
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ permutation_computations.z_evals_last_idx|hex_padded(64) }}) // z_evals_last_idx
-            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 3 + gate_computations.len() + gate_computations_total_length %}
+            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 2 + gate_computations.len() %}
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ permutation_computations.chunk_offset|hex_padded(64) }}) // chunk_offset
             {%- for z_eval in permutation_computations.permutation_z_evals %}
-            {%- let base_offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 4 + gate_computations.len() + gate_computations_total_length %}
+            {%- let base_offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 3 + gate_computations.len() %}
             {%- let offset = base_offset + loop.index0 * (permutation_computations.column_evals[0].len() + 1)%}
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ z_eval|hex_padded(64) }}) // permutation_z_evals[{{ loop.index0 }}]
             {%- let last_index = permutation_computations.permutation_z_evals.len() - 1 %}
@@ -62,10 +62,10 @@ contract Halo2VerifyingKey {
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ column_eval|hex_padded(64) }}) // column_eval[{{ loop.index0 }}]
             {%- endfor %}
             {%- endfor %}
-            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 2 + gate_computations.len() + gate_computations_total_length + permutation_computations.len() %}
+            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 + gate_computations.len() + permutation_computations.len() %}
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ lookup_computations.end_ptr|hex_padded(64) }}) // end_ptr of lookup_computations
             {%- for lookup in lookup_computations.lookups %}
-            {%- let base_offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 2 + gate_computations.len() + gate_computations_total_length + permutation_computations.len() + 1 %}
+            {%- let base_offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 2 + gate_computations.len() + permutation_computations.len() %}
             {%- let offset = base_offset + (loop.index0 * 3) + lookup.acc %}
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ lookup.evals|hex_padded(64) }}) // lookup_evals[{{ loop.index0 }}]
             mstore({{ (32 * (offset + 1))|hex_padded(4) }}, {{ lookup.table_lines|hex_padded(64) }}) // lookup_table_lines[{{ loop.index0 }}]
@@ -79,7 +79,7 @@ contract Halo2VerifyingKey {
             mstore({{ (32 * (offset + input.expression.len() + 1))|hex_padded(4) }}, {{ input.vars|hex_padded(64) }}) // input_vars [{{ loop.index0 }}]
             {%- endfor %}
             {%- endfor %}
-            return(0, {{ (32 * (constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 2 + gate_computations.len() + gate_computations_total_length + permutation_computations.len() + lookup_computations.len() ))|hex() }})
+            return(0, {{ (32 * (constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 2 + gate_computations.len() + permutation_computations.len() + lookup_computations.len() ))|hex() }})
         }
     }
 }

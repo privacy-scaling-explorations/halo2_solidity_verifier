@@ -571,7 +571,7 @@ contract Halo2Verifier {
                     }
                 }
                 {
-                    // Lookup computations
+                    // MV lookup computations 
                     mstore(0x0, mload(add(theta_mptr, 0x1C0))) // l_last
                     mstore(0x20, mload(add(theta_mptr, 0x200))) // l_0
                     mstore(0x40, mload(add(theta_mptr, 0x1E0))) // l_blind

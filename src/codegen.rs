@@ -9,7 +9,7 @@ use crate::codegen::{
         expression_consts, fr_to_u256, g1_to_u256s, g2_to_u256s, ConstraintSystemMeta, Data, Ptr,
     },
 };
-use evaluator::{LookupsDataEncoded, PermutationDataEncoded};
+use evaluator::{GateDataEncoded, LookupsDataEncoded, PermutationDataEncoded};
 use halo2_proofs::{
     halo2curves::{bn256, ff::Field},
     plonk::VerifyingKey,
@@ -319,8 +319,7 @@ impl<'a> SolidityGenerator<'a> {
             permutation_comms: permutation_comms.clone(),
             const_expressions: vec![],
             num_advices_user_challenges: vec![],
-            gate_computations: vec![],
-            gate_computations_total_length: 0,
+            gate_computations: GateDataEncoded::default(),
             permutation_computations: PermutationDataEncoded::default(),
             lookup_computations: LookupsDataEncoded::default(),
         };
@@ -372,17 +371,9 @@ impl<'a> SolidityGenerator<'a> {
         );
 
         // Fill in the gate computations with dummy values. (maintains the correct shape)
-        let mut cumulative_length = 0;
-        let dummy_gate_computations: Vec<(Vec<U256>, usize)> =
-            chain![evaluator_dummy.gate_computations()]
-                .map(|lines| {
-                    let operations = lines.iter().map(|_line| U256::from(0)).collect::<Vec<_>>();
-                    let length = operations.len();
-                    let gate_computation = (operations, cumulative_length);
-                    cumulative_length += length;
-                    gate_computation
-                })
-                .collect();
+        let gate_computations_dummy = evaluator_dummy.gate_computations();
+        let permutation_computations_dummy = evaluator_dummy.permutation_computations();
+        let lookup_computations_dummy = evaluator_dummy.lookup_computations(0);
 
         let num_advices = self.meta.num_advices();
         let num_user_challenges = self.meta.num_challenges();
@@ -411,10 +402,10 @@ impl<'a> SolidityGenerator<'a> {
             + (const_expressions.len() * 0x20);
         let gate_computations_len_offset = num_advices_user_challenges_offset
             + ((num_advices_user_challenges.len() * 0x40) + 0x20);
-        let permutations_computations_len_offset = gate_computations_len_offset
-            + (0x20 * (dummy_gate_computations.len() + cumulative_length) + 0x20);
-        let lookup_computations_len_offset = permutations_computations_len_offset
-            + (0x20 * evaluator_dummy.permutation_computations().len());
+        let permutations_computations_len_offset =
+            gate_computations_len_offset + (0x20 * gate_computations_dummy.len());
+        let lookup_computations_len_offset =
+            permutations_computations_len_offset + (0x20 * permutation_computations_dummy.len());
 
         set_constant_value(&mut constants, "instance_cptr", instance_cptr);
         set_constant_value(
@@ -455,10 +446,9 @@ impl<'a> SolidityGenerator<'a> {
             permutation_comms,
             const_expressions,
             num_advices_user_challenges,
-            gate_computations: dummy_gate_computations,
-            gate_computations_total_length: cumulative_length,
-            permutation_computations: evaluator_dummy.permutation_computations(),
-            lookup_computations: evaluator_dummy.lookup_computations(0),
+            gate_computations: gate_computations_dummy,
+            permutation_computations: permutation_computations_dummy,
+            lookup_computations: lookup_computations_dummy,
         };
 
         // Now generate the real vk_mptr with a vk that has the correct length
@@ -500,22 +490,8 @@ impl<'a> SolidityGenerator<'a> {
         // Now we initalize the real evaluator_vk which will contain the correct offsets in the vk_lookup_const_table.
         let evaluator = EvaluatorVK::new(self.vk.cs(), &self.meta, &data, vk_lookup_const_table);
 
-        let mut cumulative_length = 0;
-        let gate_computations: Vec<(Vec<U256>, usize)> = chain![evaluator.gate_computations()]
-            .map(|lines| {
-                let operations = lines
-                    .iter()
-                    .map(|line: &ruint::Uint<256, 4>| U256::from(*line))
-                    .collect::<Vec<_>>();
-                let length = operations.len();
-                let gate_computation = (operations, cumulative_length);
-                cumulative_length += length;
-                gate_computation
-            })
-            .collect();
-
         // NOTE: We don't need to replace the gate_computations_total_length since we are only potentially modifying the offsets for each constant mload operation.
-        vk.gate_computations = gate_computations;
+        vk.gate_computations = evaluator.gate_computations();
         // We need to replace the lookup_computations so that the constant mptrs in the encoded input expessions have the correct offsets.
         vk.lookup_computations =
             evaluator.lookup_computations(vk_mptr + lookup_computations_len_offset);
