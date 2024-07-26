@@ -229,6 +229,60 @@ contract Halo2Verifier {
                 ret := quotient_eval_numer
             }
 
+            function expression_evals_packed(fsmp, code_ptr, expressions_word) -> ret0, ret1, ret2 {
+                // Load in the least significant byte of the `expressions_word` word to get the total number of words we will need to load in.
+                let num_words := add(mul(0x20, and(expressions_word, 0xFF)), 0x20)
+                // start of the expression encodings
+                expressions_word := shr(8, expressions_word)
+                let acc 
+                for { let i := 0x20 } lt(i, num_words) { i := add(i, 0x20) } {
+                    for {  } expressions_word { } {
+                        // Load in the least significant byte of the `expression` word to get the operation type 
+                        // Then determine which operation to peform and then store the result in the next available memory slot.
+                        switch and(expressions_word, 0xFF)
+                        // 0x00 => Advice/Fixed expression
+                        case 0x00 {
+                            expressions_word := shr(8, expressions_word)
+                            // Load the calldata ptr from the expression, which come from the 2nd and 3rd least significant bytes.
+                            mstore(add(fsmp, acc), calldataload(and(expressions_word, 0xFFFF)))
+                            // Move to the next expression
+                            expressions_word := shr(16, expressions_word)
+                        } 
+                        // 0x01 => Negated expression
+                        case 0x01 {
+                            expressions_word := shr(8, expressions_word)
+                            // Load the memory ptr from the expression, which come from the 2nd and 3rd least significant bytes
+                            mstore(add(fsmp, acc), sub(R, mload(and(expressions_word, 0xFFFF))))
+                            // Move to the next expression
+                            expressions_word := shr(16, expressions_word)
+                        }
+                        // 0x02 => Sum expression
+                        case 0x02 {
+                            expressions_word := shr(8, expressions_word)
+                            // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
+                            // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
+                            mstore(add(fsmp, acc), addmod(mload(and(expressions_word, 0xFFFF)), mload(and(shr(16, expressions_word), 0xFFFF)),R))
+                            // Move to the next expression
+                            expressions_word := shr(32, expressions_word)
+                        }
+                        // 0x03 => Product/scalar expression
+                        case 0x03 {
+                            expressions_word := shr(8, expressions_word)
+                            // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
+                            // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
+                            mstore(add(fsmp, acc), mulmod(mload(and(expressions_word, 0xFFFF)),mload(and(shr(16, expressions_word), 0xFFFF)),R))
+                            // Move to the next expression
+                            expressions_word := shr(32, expressions_word)
+                        }
+                        acc := add(acc, 0x20)
+                    }
+                    ret0 := add(code_ptr, i)
+                    expressions_word := mload(ret0)
+                }
+                ret0 := ret0
+                ret1 := expressions_word
+                ret2 := sub(acc, 0x20)
+            }
             function expression_evals(fsmp, code_len, code_ptr) {
                 for { let i := 0 } lt(i, code_len) { i := add(i, 0x20) } {
                     /// @dev Note we can optimize the amount of space the expressions take up by packing 32/5 == 6 expressions into a single word
@@ -500,22 +554,14 @@ contract Halo2Verifier {
                 {
                     // Gate computations / expression evaluations.
                     let computations_ptr, computations_len := soa_layout_metadata(0x380, vk_mptr)
-                    let expression := 0x0 // Initialize this to 0. Will set it later in the loop. Expression represent the operation type and assocaited operand pointers.
-                    let expression_acc := 0x0
+                    let expressions_word := mload(computations_ptr) 
+                    let last_idx
                     // Load in the total number of code blocks from the vk constants, right after the number challenges
                     for { let code_block := 0 } lt(code_block, computations_len) { code_block := add(code_block, 0x20) } {
-                        let code_ptr := add(add(computations_ptr, code_block), expression_acc)
-                        // Shift the code_len by the free_static_memory_ptr
-                        let code_len := mload(code_ptr)
                         // call expression_evals to evaluate the expressions in the code block
-                        expression_evals(0x00, code_len, add(code_ptr, 0x20))
-
-                        expression_acc := add(expression_acc, code_len)
-
-                        let last_idx := sub(code_len, 0x20)
+                        computations_ptr, expressions_word, last_idx := expression_evals_packed(0x00, computations_ptr, expressions_word)
 
                         // at the end of each code block we update `quotient_eval_numer`
-
                         // If this is the first code block, we set `quotient_eval_numer` to the last var in the code block
                         switch eq(code_block, 0)
                         case 1 {

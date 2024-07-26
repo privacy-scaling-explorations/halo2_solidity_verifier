@@ -30,15 +30,11 @@ contract Halo2VerifyingKey {
             mstore({{ (32 * (offset + 2 * loop.index0 + 1))|hex_padded(4) }}, {{ y|hex_padded(64) }}) // user_challenges[{{ loop.index0 }}].y
             {%- endfor %}
             {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 %}
-            mstore({{ (32 * offset)|hex_padded(4) }}, {{ (32 * gate_computations.gates.len())|hex_padded(64) }}) // gate_computations length
-            {%- for gate in gate_computations.gates %}
+            mstore({{ (32 * offset)|hex_padded(4) }}, {{ (32 * gate_computations.length)|hex_padded(64) }}) // gate_computations length
+            {%- for packed_expression_word in gate_computations.packed_expression_words %}
             {%- let base_offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 2 %}
-            {%- let offset = base_offset + loop.index0 + gate.acc %}
-            mstore({{ (32 * offset)|hex_padded(4) }}, {{ (32 * gate.expression.len())|hex_padded(64) }}) // gate_computation length[{{ loop.index0 }}]
-            {%- for operation in gate.expression %}
-            {%- let offset = offset + loop.index0 + 1 %}
-            mstore({{ (32 * offset)|hex_padded(4) }}, {{ operation|hex_padded(64) }}) // gate_computation[{{ loop.index0 }}]
-            {%- endfor %}
+            {%- let offset = base_offset + loop.index0 %}
+            mstore({{ (32 * offset)|hex_padded(4) }}, {{ packed_expression_word|hex_padded(64) }}) // packed_expression_word [{{ loop.index0 }}]
             {%- endfor %}
             {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 + gate_computations.len() %}
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ permutation_computations.z_evals_last_idx|hex_padded(64) }}) // z_evals_last_idx
@@ -79,7 +75,7 @@ contract Halo2VerifyingKey {
             mstore({{ (32 * (offset + input.expression.len() + 1))|hex_padded(4) }}, {{ input.vars|hex_padded(64) }}) // input_vars [{{ loop.index0 }}]
             {%- endfor %}
             {%- endfor %}
-            return(0, {{ (32 * (constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 2 + gate_computations.len() + permutation_computations.len() + lookup_computations.len() ))|hex() }})
+            return(0, {{ (32 * (constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 + gate_computations.len() + permutation_computations.len() + lookup_computations.len() ))|hex() }})
         }
     }
 }

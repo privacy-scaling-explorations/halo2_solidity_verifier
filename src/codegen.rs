@@ -576,8 +576,7 @@ impl<'a> SolidityGenerator<'a> {
             });
 
         let data = Data::new(&self.meta, &vk, vk_mptr, proof_cptr, true);
-        let dummy_constants = Self::dummy_vk_constants(true);
-        let vk_const_offsets: HashMap<&'static str, U256> = dummy_constants
+        let vk_const_offsets: HashMap<&'static str, U256> = Self::dummy_vk_constants(true)
             .iter()
             .enumerate()
             .map(|(idx, &(key, _))| (key, U256::from(idx * 32)))

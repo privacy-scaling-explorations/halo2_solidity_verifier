@@ -531,24 +531,13 @@ pub enum OperandMem {
     StaticMemory,
 }
 
-#[derive(Clone, PartialEq, Eq)]
-pub struct GateEncoded {
-    pub(crate) expression: Vec<U256>,
-    pub(crate) acc: usize,
-}
-
-impl GateEncoded {
-    pub fn len(&self) -> usize {
-        self.expression.len()
-    }
-}
-
 // Holds the encoded data stored in the separate VK
 // needed to perform the gate computations of
 // the quotient evaluation portion of the reusable verifier.
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct GateDataEncoded {
-    pub(crate) gates: Vec<GateEncoded>,
+    pub(crate) length: usize,
+    pub(crate) packed_expression_words: Vec<U256>,
 }
 
 impl GateDataEncoded {
@@ -556,7 +545,7 @@ impl GateDataEncoded {
         if self == &Self::default() {
             0
         } else {
-            1 + self.gates.len() + self.gates.iter().map(GateEncoded::len).sum::<usize>()
+            1 + self.packed_expression_words.len()
         }
     }
 }
@@ -681,28 +670,37 @@ where
     }
 
     pub fn gate_computations(&self) -> GateDataEncoded {
-        let res: Vec<Vec<U256>> = self
+        let packed_expression_words: Vec<Vec<U256>> = self
             .cs
             .gates()
             .iter()
             .flat_map(Gate::polynomials)
-            .map(|expression| self.evaluate_and_reset(expression))
+            .map(|expression| self.evaluate_and_reset(expression, true))
             .collect();
-        let mut cumulative_length = 0;
-        let gate_computations: Vec<GateEncoded> = chain![res]
-            .map(|lines| {
-                let length = lines.len();
-                let gate_computation = GateEncoded {
-                    expression: lines,
-                    acc: cumulative_length,
-                };
-                cumulative_length += length;
-                gate_computation
-            })
-            .collect();
+        let length = packed_expression_words.len();
+        let packed_expression_words_flattened: Vec<U256> =
+            packed_expression_words.into_iter().flatten().collect();
+
         GateDataEncoded {
-            gates: gate_computations,
+            length,
+            packed_expression_words: packed_expression_words_flattened,
         }
+    }
+
+    pub fn gate_computation_fsm_usage(&self) -> usize {
+        let packed_expression_words: Vec<Vec<U256>> = self
+            .cs
+            .gates()
+            .iter()
+            .flat_map(Gate::polynomials)
+            .map(|expression| self.evaluate_and_reset(expression, false))
+            .collect();
+        let gate_computation_longest = chain![packed_expression_words]
+            .max_by_key(|x| x.len())
+            .unwrap()
+            .clone()
+            .len();
+        gate_computation_longest * 0x20
     }
 
     pub fn permutation_computations(&self) -> PermutationDataEncoded {
@@ -739,12 +737,7 @@ where
 
     #[cfg(not(feature = "mv-lookup"))]
     pub fn quotient_eval_fsm_usage(&self) -> usize {
-        let gate_computation_longest = chain![self.gate_computations().gates]
-            .max_by_key(|x| x.len())
-            .unwrap()
-            .clone()
-            .len();
-        let gate_computation_fsm_usage = gate_computation_longest * 0x20;
+        let gate_computation_fsm_usage = self.gate_computation_fsm_usage();
 
         let permutation_computation_fsm_usage = (self.data.permutation_z_evals.len() * 0x20) + 0x40;
 
@@ -761,12 +754,7 @@ where
 
     #[cfg(feature = "mv-lookup")]
     pub fn quotient_eval_fsm_usage(&self) -> usize {
-        let gate_computation_longest = chain![self.gate_computations().gates]
-            .max_by_key(|x| x.len())
-            .unwrap()
-            .clone()
-            .len();
-        let gate_computation_fsm_usage = gate_computation_longest * 0x20;
+        let gate_computation_fsm_usage = self.gate_computation_fsm_usage();
 
         // 0x40 offset b/c that is where the fsm pointer starts in the permutations computation code block
         let permutation_computation_fsm_usage = (self.data.permutation_z_evals.len() * 0x20) + 0x40;
@@ -1003,11 +991,49 @@ where
         Ok(packed)
     }
 
-    fn evaluate_and_reset(&self, expression: &Expression<F>) -> Vec<U256> {
+    fn encode_pack_expr_operations(&self, exprs: Vec<U256>) -> Vec<U256> {
+        let mut packed_words: Vec<U256> = vec![U256::from(0)];
+        let mut bit_counter = 8;
+        let mut last_idx = 0;
+
+        for expr in exprs.iter() {
+            let first_byte = expr.as_limbs()[0] & 0xFF;
+            let offset = if first_byte == 0 || first_byte == 1 {
+                24
+            } else {
+                40
+            };
+
+            let mut next_bit_counter = bit_counter + offset;
+            if next_bit_counter > 256 {
+                last_idx += 1;
+                packed_words.push(U256::from(0));
+                next_bit_counter = offset;
+                packed_words[last_idx] = *expr
+            } else {
+                packed_words[last_idx] |= *expr << bit_counter;
+            }
+            bit_counter = next_bit_counter;
+        }
+
+        let packed_words_len = packed_words.len();
+
+        // Encode the length of the exprs vec in the first word
+        packed_words[0] |= U256::from(packed_words_len);
+
+        packed_words
+    }
+
+    fn evaluate_and_reset(&self, expression: &Expression<F>, pack: bool) -> Vec<U256> {
         *self.static_mem_ptr.borrow_mut() = 0x0;
         let result = self.evaluate_encode(expression);
         self.reset();
-        result.0
+        let res = result.0;
+        if pack {
+            self.encode_pack_expr_operations(res)
+        } else {
+            res
+        }
     }
 
     fn set_static_mem_ptr(&self, value: usize) {
