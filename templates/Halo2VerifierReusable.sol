@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.0;
 
 contract Halo2Verifier {
     uint256 internal constant    PROOF_LEN_CPTR = 0x64;
@@ -279,7 +279,6 @@ contract Halo2Verifier {
                     ret0 := add(code_ptr, i)
                     expressions_word := mload(ret0)
                 }
-                ret0 := ret0
                 ret1 := expressions_word
                 ret2 := sub(acc, 0x20)
             }
