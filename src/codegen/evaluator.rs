@@ -246,7 +246,6 @@ where
                                 } else {
                                     input_lines
                                 };
-                            // use regex to
                             chain![
                                 [format!("let {ident}")],
                                 code_block::<1, false>(chain![
@@ -596,28 +595,31 @@ pub struct InputsEncoded {
 #[derive(Clone, PartialEq, Eq)]
 pub struct LookupEncoded {
     pub(crate) evals: U256,
-    pub(crate) table_lines: U256,
+    pub(crate) table_lines: Vec<U256>,
+    pub(crate) table_inputs: U256,
     pub(crate) acc: usize,
     pub(crate) inputs: Vec<InputsEncoded>,
 }
 
 // For each element of the lookups vector we have a word for:
 // 1) the evals (cptr, cptr, cptr),
-// 2) table lines Vec<cptr> packed into a single (throws an error if table_lines.len() > 16)
-// 3) outer_inputs_len (inputs.0.len())
+// 2) table_lines Vec<packed_expressions>
+// 3) table_inputs Vec<mptr> packed into a single (throws an error if table_inputs.len() > 16)
+// 4) outer_inputs_len (inputs.0.len())
 // For each element of the inputs vector in LookupEncoded we have a word for:
-// 1) input_lines_len (inputs[i].0.len()) packed into a single (throws an error if inputs.1.len() > 16)
-// 2) inputs (inputs[i].1) packed into a single (throws an error if inputs.1.len() > 16)
+// 1) inputs (inputs[i].expressions)
+// 2) input_vars Vec<mptr> packed into a single (throws an error if > 16)
 // Then we have a word for each step in the expression evaluation. This is the
 // sum of the lengths of the inputs.
 impl LookupEncoded {
     pub fn len(&self) -> usize {
-        3 + (2 * self.inputs.len())
+        3 + (self.inputs.len())
             + self
                 .inputs
                 .iter()
                 .map(|inputs| inputs.expression.len())
                 .sum::<usize>()
+            + self.table_lines.len()
     }
 }
 
@@ -801,20 +803,20 @@ where
     #[cfg(feature = "mv-lookup")]
     pub fn lookup_computations(&self, offset: usize) -> LookupsDataEncoded {
         let evaluate_table = |expressions: &Vec<_>| {
-            // println!("expressions: {:?}", expressions);
+            let offset = 0xa0; // offset to store theta offset ptrs used
+            self.set_static_mem_ptr(offset); // println!("expressions: {:?}", expressions);
             let (lines, inputs) = expressions
                 .iter()
-                .map(|expression| self.evaluate_encode_calldata(expression))
+                .map(|expression| self.evaluate_encode(expression))
                 .fold((Vec::new(), Vec::new()), |mut acc, result| {
                     acc.0.extend(result.0);
                     acc.1.push(result.1);
                     acc
                 });
-            // assert that lines.len() <= and inputs.len() == inputs.len()
-            assert!(lines.len() <= 16);
-            assert!(inputs.len() == lines.len());
+            assert!(inputs.len() <= 16);
             self.reset();
-            (lines, inputs)
+            let lines_packed = self.encode_pack_expr_operations(lines);
+            (lines_packed, inputs)
         };
 
         let evaluate_inputs = |idx: usize, expressions: &Vec<_>| {
@@ -832,7 +834,8 @@ where
                     acc
                 });
             self.reset();
-            (lines, inputs)
+            let lines_packed = self.encode_pack_expr_operations(lines);
+            (lines_packed, inputs)
         };
 
         let inputs_tables = self
@@ -857,9 +860,9 @@ where
 
         let lookups: Vec<LookupEncoded> = izip!(inputs_tables, &self.data.lookup_evals)
             .map(|(inputs_tables, evals)| {
-                let (inputs, (table_lines, _)) = inputs_tables.clone();
+                let (inputs, (table_lines, table_inputs)) = inputs_tables.clone();
                 let evals = self.encode_triplet_evaluation_word(evals);
-                let table_lines = self.encode_pack_ptrs(&table_lines).unwrap();
+                let table_inputs = self.encode_pack_ptrs(&table_inputs).unwrap();
                 let mut inner_accumulator = 0;
                 let inputs: Vec<InputsEncoded> = inputs
                     .iter()
@@ -876,7 +879,8 @@ where
                     .collect_vec();
                 let lookup_encoded = LookupEncoded {
                     evals,
-                    table_lines,
+                    table_lines: table_lines.clone(),
+                    table_inputs,
                     inputs: inputs.clone(),
                     acc: accumulator,
                 };
@@ -900,29 +904,6 @@ where
     pub fn lookup_computations(&self, offset: usize) -> LookupsDataEncoded {
         // TODO implement non mv lookup version of this
         LookupsDataEncoded::default()
-    }
-
-    fn eval_encode_raw_cptr(
-        &self,
-        column_type: impl Into<Any>,
-        column_index: usize,
-        rotation: i32,
-    ) -> U256 {
-        match column_type.into() {
-            Any::Advice(_) => U256::from(
-                self.data.advice_evals[&(column_index, rotation)]
-                    .ptr()
-                    .value()
-                    .as_usize(),
-            ),
-            Any::Fixed => U256::from(
-                self.data.fixed_evals[&(column_index, rotation)]
-                    .ptr()
-                    .value()
-                    .as_usize(),
-            ),
-            Any::Instance => unimplemented!(), // On the EVM side the 0x0 op here we will inidicate that we need to perform the l_0 mload operation.
-        }
     }
 
     fn eval_encoded(
@@ -1038,28 +1019,6 @@ where
 
     fn set_static_mem_ptr(&self, value: usize) {
         *self.static_mem_ptr.borrow_mut() = value;
-    }
-
-    fn evaluate_encode_calldata(&self, expression: &Expression<F>) -> (Vec<U256>, U256) {
-        evaluate_calldata(
-            expression,
-            &|query| {
-                self.init_encoded_var(
-                    self.eval_encode_raw_cptr(Fixed, query.column_index(), query.rotation().0),
-                    OperandMem::Calldata,
-                )
-            },
-            &|query| {
-                self.init_encoded_var(
-                    self.eval_encode_raw_cptr(
-                        Advice::default(),
-                        query.column_index(),
-                        query.rotation().0,
-                    ),
-                    OperandMem::Calldata,
-                )
-            },
-        )
     }
 
     fn evaluate_encode(&self, expression: &Expression<F>) -> (Vec<U256>, U256) {
@@ -1223,28 +1182,5 @@ where
         Expression::Sum(lhs, rhs) => sum(evaluate(lhs), evaluate(rhs)),
         Expression::Product(lhs, rhs) => product(evaluate(lhs), evaluate(rhs)),
         Expression::Scaled(value, scalar) => scaled(evaluate(value), fe_to_u256(*scalar)),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn evaluate_calldata<F, T>(
-    expression: &Expression<F>,
-    fixed: &impl Fn(FixedQuery) -> T,
-    advice: &impl Fn(AdviceQuery) -> T,
-) -> T
-where
-    F: PrimeField<Repr = [u8; 0x20]>,
-{
-    match expression {
-        Expression::Constant(_) => unreachable!(),
-        Expression::Selector(_) => unreachable!(),
-        Expression::Fixed(query) => fixed(*query),
-        Expression::Advice(query) => advice(*query),
-        Expression::Instance(_) => unreachable!(),
-        Expression::Challenge(_) => unreachable!(),
-        Expression::Negated(_) => unreachable!(),
-        Expression::Sum(_, _) => unreachable!(),
-        Expression::Product(_, _) => unreachable!(),
-        Expression::Scaled(_, _) => unreachable!(),
     }
 }

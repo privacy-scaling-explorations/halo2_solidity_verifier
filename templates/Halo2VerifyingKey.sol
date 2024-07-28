@@ -64,11 +64,13 @@ contract Halo2VerifyingKey {
             {%- let base_offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 2 + gate_computations.len() + permutation_computations.len() %}
             {%- let offset = base_offset + (loop.index0 * 3) + lookup.acc %}
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ lookup.evals|hex_padded(64) }}) // lookup_evals[{{ loop.index0 }}]
-            mstore({{ (32 * (offset + 1))|hex_padded(4) }}, {{ lookup.table_lines|hex_padded(64) }}) // lookup_table_lines[{{ loop.index0 }}]
-            mstore({{ (32 * (offset + 2))|hex_padded(4) }}, {{ (32 * lookup.inputs.len())|hex_padded(64) }}) // outer_inputs_len[{{ loop.index0 }}]
+            {%- for table_line in lookup.table_lines %}
+            mstore({{ (32 * (offset + 1 + loop.index0))|hex_padded(4) }}, {{ table_line|hex_padded(64) }}) // lookup_table_line [{{ loop.index0 }}]
+            {%- endfor %}
+            mstore({{ (32 * (offset + 1 + lookup.table_lines.len()))|hex_padded(4) }}, {{ lookup.table_inputs|hex_padded(64) }}) // lookup_table_inputs [{{ loop.index0 }}]
+            mstore({{ (32 * (offset + 2 + lookup.table_lines.len()))|hex_padded(4) }}, {{ (32 * lookup.inputs.len())|hex_padded(64) }}) // outer_inputs_len[{{ loop.index0 }}]
             {%- for input in lookup.inputs %}
             {%- let offset = offset + loop.index0 + input.acc + 3 %}
-            mstore({{ (32 * offset)|hex_padded(4) }}, {{ (32 * input.expression.len())|hex_padded(64) }}) // inputs_len [{{ loop.index0 }}]
             {%- for expression in input.expression %}
             mstore({{ (32 * (offset + loop.index0 + 1))|hex_padded(4) }}, {{ expression|hex_padded(64) }}) // input_expression [{{ loop.index0 }}]
             {%- endfor %}

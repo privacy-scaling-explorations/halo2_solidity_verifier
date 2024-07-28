@@ -229,6 +229,48 @@ contract Halo2Verifier {
                 ret := quotient_eval_numer
             }
 
+            function expression_operations(expressions_word, fsmp, acc) -> ret {
+                let mstore_ptr := add(fsmp, acc)
+                // Load in the least significant byte of the `expression` word to get the operation type 
+                // Then determine which operation to peform and then store the result in the next available memory slot.
+                switch and(expressions_word, 0xFF)
+                // 0x00 => Advice/Fixed expression
+                case 0x00 {
+                    expressions_word := shr(8, expressions_word)
+                    // Load the calldata ptr from the expression, which come from the 2nd and 3rd least significant bytes.
+                    mstore(mstore_ptr, calldataload(and(expressions_word, 0xFFFF)))
+                    // Move to the next expression
+                    expressions_word := shr(16, expressions_word)
+                } 
+                // 0x01 => Negated expression
+                case 0x01 {
+                    expressions_word := shr(8, expressions_word)
+                    // Load the memory ptr from the expression, which come from the 2nd and 3rd least significant bytes
+                    mstore(mstore_ptr, sub(R, mload(and(expressions_word, 0xFFFF))))
+                    // Move to the next expression
+                    expressions_word := shr(16, expressions_word)
+                }
+                // 0x02 => Sum expression
+                case 0x02 {
+                    expressions_word := shr(8, expressions_word)
+                    // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
+                    // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
+                    mstore(mstore_ptr, addmod(mload(and(expressions_word, 0xFFFF)), mload(and(shr(16, expressions_word), 0xFFFF)),R))
+                    // Move to the next expression
+                    expressions_word := shr(32, expressions_word)
+                }
+                // 0x03 => Product/scalar expression
+                case 0x03 {
+                    expressions_word := shr(8, expressions_word)
+                    // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
+                    // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
+                    mstore(mstore_ptr, mulmod(mload(and(expressions_word, 0xFFFF)),mload(and(shr(16, expressions_word), 0xFFFF)),R))
+                    // Move to the next expression
+                    expressions_word := shr(32, expressions_word)
+                }
+                ret := expressions_word
+            }
+
             function expression_evals_packed(fsmp, code_ptr, expressions_word) -> ret0, ret1, ret2 {
                 // Load in the least significant byte of the `expressions_word` word to get the total number of words we will need to load in.
                 let num_words := add(mul(0x20, and(expressions_word, 0xFF)), 0x20)
@@ -237,43 +279,7 @@ contract Halo2Verifier {
                 let acc 
                 for { let i := 0x20 } lt(i, num_words) { i := add(i, 0x20) } {
                     for {  } expressions_word { } {
-                        // Load in the least significant byte of the `expression` word to get the operation type 
-                        // Then determine which operation to peform and then store the result in the next available memory slot.
-                        switch and(expressions_word, 0xFF)
-                        // 0x00 => Advice/Fixed expression
-                        case 0x00 {
-                            expressions_word := shr(8, expressions_word)
-                            // Load the calldata ptr from the expression, which come from the 2nd and 3rd least significant bytes.
-                            mstore(add(fsmp, acc), calldataload(and(expressions_word, 0xFFFF)))
-                            // Move to the next expression
-                            expressions_word := shr(16, expressions_word)
-                        } 
-                        // 0x01 => Negated expression
-                        case 0x01 {
-                            expressions_word := shr(8, expressions_word)
-                            // Load the memory ptr from the expression, which come from the 2nd and 3rd least significant bytes
-                            mstore(add(fsmp, acc), sub(R, mload(and(expressions_word, 0xFFFF))))
-                            // Move to the next expression
-                            expressions_word := shr(16, expressions_word)
-                        }
-                        // 0x02 => Sum expression
-                        case 0x02 {
-                            expressions_word := shr(8, expressions_word)
-                            // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
-                            // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
-                            mstore(add(fsmp, acc), addmod(mload(and(expressions_word, 0xFFFF)), mload(and(shr(16, expressions_word), 0xFFFF)),R))
-                            // Move to the next expression
-                            expressions_word := shr(32, expressions_word)
-                        }
-                        // 0x03 => Product/scalar expression
-                        case 0x03 {
-                            expressions_word := shr(8, expressions_word)
-                            // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
-                            // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
-                            mstore(add(fsmp, acc), mulmod(mload(and(expressions_word, 0xFFFF)),mload(and(shr(16, expressions_word), 0xFFFF)),R))
-                            // Move to the next expression
-                            expressions_word := shr(32, expressions_word)
-                        }
+                        expressions_word := expression_operations(expressions_word, fsmp, acc)
                         acc := add(acc, 0x20)
                     }
                     ret0 := add(code_ptr, i)
@@ -282,6 +288,25 @@ contract Halo2Verifier {
                 ret1 := expressions_word
                 ret2 := sub(acc, 0x20)
             }
+
+            function lookup_expr_evals_packed(fsmp, code_ptr, expressions_word, theta, beta) -> ret0, ret1 {
+                let idx
+                let vars // packed vars with mload cptrs to load in the vars stored in static memory in the 
+                // expression evaluation.
+                ret0, vars, idx := expression_evals_packed(fsmp, code_ptr, expressions_word)
+                ret1 := mload(and(vars, 0xFFFF)) // initlaize the accumulator with the first value in the vars
+                vars := shr(16, vars)
+                for {  } vars { } {
+                    ret1 := addmod(
+                        mulmod(ret1, theta, R),
+                        mload(and(vars, 0xFFFF)),
+                        R
+                    )
+                    vars := shr(16, vars)
+                }
+                ret1 := addmod(ret1, beta, R)
+            }
+            
             function expression_evals(fsmp, code_len, code_ptr) {
                 for { let i := 0 } lt(i, code_len) { i := add(i, 0x20) } {
                     /// @dev Note we can optimize the amount of space the expressions take up by packing 32/5 == 6 expressions into a single word
@@ -640,40 +665,14 @@ contract Halo2Verifier {
                         let table
                         // load in the table_lines_len from the evals_ptr
                         evals_ptr := add(evals_ptr, 0x20)
-                        let table_lines := mload(evals_ptr)
-                        table := calldataload(and(table_lines, 0xFFFF))
-                        table_lines := shr(16, table_lines)
-                        for {  } table_lines { } {
-                            // extract the calldata ptr from the tables_lines
-                            table := addmod(
-                                mulmod(table, mload(0x60), R),
-                                calldataload(and(table_lines, 0xFFFF)),
-                                R
-                            )
-                            table_lines := shr(16, table_lines)
-                        }
-                        table := addmod(table, mload(0x80), R)
+                        evals_ptr, table := lookup_expr_evals_packed(0xa0, evals_ptr, mload(evals_ptr), mload(0x60), mload(0x80))
                         evals_ptr := add(evals_ptr, 0x20)
                         let outer_inputs_len := mload(evals_ptr)
                         for { let j := 0xa0 } lt(j, add(outer_inputs_len, 0xa0)) { j := add(j, 0x20) } {
                             evals_ptr := add(evals_ptr, 0x20)
-                            let input_lines_len := mload(evals_ptr)
                             // call the expression_evals function to evaluate the input_lines
-                            expression_evals(j, input_lines_len, add(evals_ptr, 0x20))
-                            evals_ptr := add(add(evals_ptr, input_lines_len), 0x20)
-                            let inputs := mload(evals_ptr)
-                            let ident := mload(and(inputs, 0xFFFF))
-                            inputs := shr(16, inputs)
-                            for {  } inputs { } {
-                                // extract the mload ptr from the inputs stored in memory
-                                ident := addmod(
-                                    mulmod(ident, mload(0x60), R),
-                                    mload(and(inputs, 0xFFFF)),
-                                    R
-                                )
-                                inputs := shr(16, inputs)
-                            }
-                            ident := addmod(ident, mload(0x80), R)
+                            let ident
+                            evals_ptr, ident := lookup_expr_evals_packed(j, evals_ptr, mload(evals_ptr), mload(0x60), mload(0x80))
                             // store ident in free static memory
                             mstore(j, ident)
                         }
