@@ -649,88 +649,91 @@ contract Halo2Verifier {
                     mstore(0x80, mload(add(theta_mptr, 0x20))) // beta
                     let evals_ptr, end_ptr := soa_layout_metadata(0x3c0, vk_mptr) // TODO: Compute the end ptr of the lookup computations space
                     // iterate through the input_tables_len
-                    for { } lt(evals_ptr, end_ptr) { } {
-                        let evals := mload(evals_ptr)
-                        let phi := and(evals, 0xFFFF)
-                        quotient_eval_numer := addmod(
-                            mulmod(quotient_eval_numer, y, R), 
-                            mulmod(mload(0x20),calldataload(phi), R), 
-                            R
-                        )
-                        quotient_eval_numer := addmod(
-                            mulmod(quotient_eval_numer, y, R),
-                            mulmod(mload(0x00), calldataload(phi), R), 
-                            R
-                        )
-                        let table
-                        // load in the table_lines_len from the evals_ptr
-                        evals_ptr := add(evals_ptr, 0x20)
-                        evals_ptr, table := lookup_expr_evals_packed(0xa0, evals_ptr, mload(evals_ptr), mload(0x60), mload(0x80))
-                        evals_ptr := add(evals_ptr, 0x20)
-                        let outer_inputs_len := mload(evals_ptr)
-                        for { let j := 0xa0 } lt(j, add(outer_inputs_len, 0xa0)) { j := add(j, 0x20) } {
+                    if end_ptr {
+                        // iterate through the input_tables_len
+                        for { } lt(evals_ptr, end_ptr) { } {
+                            let evals := mload(evals_ptr)
+                            let phi := and(evals, 0xFFFF)
+                            quotient_eval_numer := addmod(
+                                mulmod(quotient_eval_numer, y, R), 
+                                mulmod(mload(0x20),calldataload(phi), R), 
+                                R
+                            )
+                            quotient_eval_numer := addmod(
+                                mulmod(quotient_eval_numer, y, R),
+                                mulmod(mload(0x00), calldataload(phi), R), 
+                                R
+                            )
+                            let table
+                            // load in the table_lines_len from the evals_ptr
                             evals_ptr := add(evals_ptr, 0x20)
-                            // call the expression_evals function to evaluate the input_lines
-                            let ident
-                            evals_ptr, ident := lookup_expr_evals_packed(j, evals_ptr, mload(evals_ptr), mload(0x60), mload(0x80))
-                            // store ident in free static memory
-                            mstore(j, ident)
-                        }
-                        evals_ptr := add(evals_ptr, 0x20)
-                        let lhs
-                        let rhs
-                        switch eq(outer_inputs_len, 0x20)
-                        case 1 {
-                            rhs := table
-                        } default {
-                            // iterate through the outer_inputs_len
-                            let last_idx := sub(outer_inputs_len, 0x20)
-                            for { let i := 0 } lt(i, outer_inputs_len) { i := add(i, 0x20) } {
-                                // iterate through the outer_inputs_len
-                                let tmp := mload(0xa0)
-                                if eq(i, 0){
-                                    tmp := mload(0xc0)
-                                }
-                                for { let j := 0 } lt(j, outer_inputs_len) { j := add(j, 0x20) } {
-                                    if eq(i, j) {
-                                        continue
-                                    }
-                                    tmp := mulmod(tmp, mload(j), R)
-                                    
-                                }
-                                rhs := addmod(rhs, tmp, R)
-                                if eq(i, last_idx) {
-                                    rhs := mulmod(rhs, table, R)
-                                } 
+                            evals_ptr, table := lookup_expr_evals_packed(0xa0, evals_ptr, mload(evals_ptr), mload(0x60), mload(0x80))
+                            evals_ptr := add(evals_ptr, 0x20)
+                            let outer_inputs_len := mload(evals_ptr)
+                            for { let j := 0xa0 } lt(j, add(outer_inputs_len, 0xa0)) { j := add(j, 0x20) } {
+                                evals_ptr := add(evals_ptr, 0x20)
+                                // call the expression_evals function to evaluate the input_lines
+                                let ident
+                                evals_ptr, ident := lookup_expr_evals_packed(j, evals_ptr, mload(evals_ptr), mload(0x60), mload(0x80))
+                                // store ident in free static memory
+                                mstore(j, ident)
                             }
-                        }
-                        let tmp := mload(0xa0)
-                        for { let j := 0x20 } lt(j, outer_inputs_len) { j := add(j, 0x20) } {
-                            tmp := mulmod(tmp, mload(j), R)
-                        }
-                        rhs := addmod(
-                            rhs, 
-                            sub(R, mulmod(calldataload(and(shr(32, evals), 0xFFFF)), tmp, R)),
-                            R
-                        )
-                        lhs := mulmod(
-                            mulmod(table, tmp, R),
-                            addmod(calldataload(and(shr(16, evals), 0xFFFF)), sub(R, calldataload(phi)), R), 
-                            R
-                        )
-                        quotient_eval_numer := addmod(
-                            mulmod(quotient_eval_numer, y, R),
-                            mulmod(
-                                addmod(
-                                    1, 
-                                    sub(R, addmod(mload(0x40), mload(0x00), R)),
+                            evals_ptr := add(evals_ptr, 0x20)
+                            let lhs
+                            let rhs
+                            switch eq(outer_inputs_len, 0x20)
+                            case 1 {
+                                rhs := table
+                            } default {
+                                // iterate through the outer_inputs_len
+                                let last_idx := sub(outer_inputs_len, 0x20)
+                                for { let i := 0 } lt(i, outer_inputs_len) { i := add(i, 0x20) } {
+                                    // iterate through the outer_inputs_len
+                                    let tmp := mload(0xa0)
+                                    if eq(i, 0){
+                                        tmp := mload(0xc0)
+                                    }
+                                    for { let j := 0 } lt(j, outer_inputs_len) { j := add(j, 0x20) } {
+                                        if eq(i, j) {
+                                            continue
+                                        }
+                                        tmp := mulmod(tmp, mload(j), R)
+                                        
+                                    }
+                                    rhs := addmod(rhs, tmp, R)
+                                    if eq(i, last_idx) {
+                                        rhs := mulmod(rhs, table, R)
+                                    } 
+                                }
+                            }
+                            let tmp := mload(0xa0)
+                            for { let j := 0x20 } lt(j, outer_inputs_len) { j := add(j, 0x20) } {
+                                tmp := mulmod(tmp, mload(j), R)
+                            }
+                            rhs := addmod(
+                                rhs, 
+                                sub(R, mulmod(calldataload(and(shr(32, evals), 0xFFFF)), tmp, R)),
+                                R
+                            )
+                            lhs := mulmod(
+                                mulmod(table, tmp, R),
+                                addmod(calldataload(and(shr(16, evals), 0xFFFF)), sub(R, calldataload(phi)), R), 
+                                R
+                            )
+                            quotient_eval_numer := addmod(
+                                mulmod(quotient_eval_numer, y, R),
+                                mulmod(
+                                    addmod(
+                                        1, 
+                                        sub(R, addmod(mload(0x40), mload(0x00), R)),
+                                        R
+                                    ), 
+                                    addmod(lhs, sub(R, rhs), R),
                                     R
                                 ), 
-                                addmod(lhs, sub(R, rhs), R),
                                 R
-                            ), 
-                            R
-                        )
+                            )
+                        }
                     }
                 }
 

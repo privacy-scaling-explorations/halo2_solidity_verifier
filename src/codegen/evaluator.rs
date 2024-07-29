@@ -644,7 +644,7 @@ impl Default for LookupsDataEncoded {
 impl LookupsDataEncoded {
     pub fn len(&self) -> usize {
         if self == &Self::default() {
-            0
+            1
         } else {
             1 + self.lookups.iter().map(LookupEncoded::len).sum::<usize>()
         }
@@ -896,6 +896,10 @@ where
             lookups,
             end_ptr: U256::from(0),
         };
+        if data.lookups.is_empty() {
+            data.end_ptr = U256::from(0x0);
+            return data;
+        }
         data.end_ptr = U256::from((data.len() * 32) + offset);
         data
     }
