@@ -4,6 +4,7 @@ use crate::codegen::util::{
     for_loop, get_memory_ptr, ConstraintSystemMeta, Data, EcPoint, Location, Ptr, Word,
 };
 use itertools::{chain, izip, Itertools};
+use ruint::aliases::U256;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// KZG batch open schemes in `halo2`.
@@ -300,6 +301,8 @@ pub(crate) fn bdfg21_computations(
         })
     ]
     .collect_vec();
+    // print the point computations
+    // println!("{:?}", point_computations);
     let mu = get_memory_ptr(theta_mptr, 7, &separate);
     let vanishing_computations = chain![
         [format!("let mu := mload({mu})").to_string()],
@@ -660,6 +663,12 @@ pub(crate) fn bdfg21_computations(
     ]
     .collect_vec();
 
+    let point_computations = if separate {
+        Vec::new()
+    } else {
+        point_computations
+    };
+
     chain![
         [point_computations, vanishing_computations],
         coeff_computations,
@@ -669,4 +678,511 @@ pub(crate) fn bdfg21_computations(
         [r_eval_computations, pairing_input_computations],
     ]
     .collect_vec()
+}
+
+// Holds the encoded data stored in the separate VK
+// needed to perform the pcs computations portion of the reusable verifier.
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct PcsDataEncoded {
+    pub(crate) point_computations: Vec<U256>,
+}
+
+// implement length of PcsDataEncoded
+impl PcsDataEncoded {
+    pub fn len(&self) -> usize {
+        self.point_computations.len()
+    }
+}
+
+pub(crate) fn bdfg21_computations_separate(
+    meta: &ConstraintSystemMeta,
+    data: &Data,
+) -> PcsDataEncoded {
+    let queries = queries(meta, data);
+    let (superset, sets) = rotation_sets(&queries);
+    let min_rot = *superset.first().unwrap();
+    let max_rot = *superset.last().unwrap();
+    let num_coeffs = sets.iter().map(|set| set.rots().len()).sum::<usize>();
+
+    // let w = EcPoint::from(data.w_cptr);
+    // let w_prime = EcPoint::from(data.w_cptr + 2);
+
+    let diff_0 = Word::from(Ptr::memory(0x00));
+    // let coeffs = sets
+    //     .iter()
+    //     .scan(diff_0.ptr() + 1, |state, set| {
+    //         let ptrs = Word::range(*state).take(set.rots().len()).collect_vec();
+    //         *state = *state + set.rots().len();
+    //         Some(ptrs)
+    //     })
+    //     .collect_vec();
+
+    // let first_batch_invert_end = diff_0.ptr() + 1 + num_coeffs;
+    // let second_batch_invert_end = diff_0.ptr() + sets.len();
+    let free_mptr = diff_0.ptr() + 2 * (1 + num_coeffs) + 6;
+
+    let point_mptr = free_mptr;
+    // let mu_minus_point_mptr = point_mptr + superset.len();
+    // let vanishing_0_mptr = mu_minus_point_mptr + superset.len();
+    // let diff_mptr = vanishing_0_mptr + 1;
+    // let r_eval_mptr = diff_mptr + sets.len();
+    // let sum_mptr = r_eval_mptr + sets.len();
+
+    // let point_vars =
+    //     izip!(&superset, (0..).map(|idx| format!("point_{idx}"))).collect::<BTreeMap<_, _>>();
+    let points = izip!(&superset, Word::range(point_mptr)).collect::<BTreeMap<_, _>>();
+    // let mu_minus_points =
+    //     izip!(&superset, Word::range(mu_minus_point_mptr)).collect::<BTreeMap<_, _>>();
+    // let vanishing_0 = Word::from(vanishing_0_mptr);
+    // let diffs = Word::range(diff_mptr).take(sets.len()).collect_vec();
+    // let r_evals = Word::range(r_eval_mptr).take(sets.len()).collect_vec();
+    // let sums = Word::range(sum_mptr).take(sets.len()).collect_vec();
+    // if separate then we load in omega and omega_inv from vk_mptr + hardcoded offset.
+    // Otherwise we load in omega and omega_inv from the solidity constants.
+
+    // let vk_mptr = "vk_mptr";
+    // let theta_mptr = "theta_mptr";
+
+    // let omega = get_memory_ptr(vk_mptr, 10, &separate);
+
+    // let omega_inv = get_memory_ptr(vk_mptr, 11, &separate);
+
+    // let g1_x = get_memory_ptr(vk_mptr, 17, &separate);
+
+    // let g1_y = get_memory_ptr(vk_mptr, 18, &separate);
+
+    // let x = get_memory_ptr(theta_mptr, 4, &separate);
+
+    // let zeta = get_memory_ptr(theta_mptr, 5, &separate);
+    let max_rot_computations: Vec<U256> = {
+        let pack_words = |points: Vec<U256>, interm_point: Option<U256>| {
+            let mut packed_words: Vec<U256> = vec![U256::from(0)];
+            let mut bit_counter = 32;
+            let points_len = points.len();
+            if let Some(interm_point) = interm_point {
+                packed_words[0] |= interm_point;
+                packed_words[0] |= U256::from(points_len) << 16;
+                bit_counter = 48;
+            } else {
+                packed_words[0] |= U256::from(points_len);
+            }
+            let mut last_idx = 0;
+
+            for point in points.iter() {
+                let offset = 16;
+
+                let mut next_bit_counter = bit_counter + offset;
+                if next_bit_counter > 256 {
+                    last_idx += 1;
+                    packed_words.push(U256::from(0));
+                    next_bit_counter = offset;
+                    packed_words[last_idx] = *point
+                } else {
+                    packed_words[last_idx] |= *point << bit_counter;
+                }
+                bit_counter = next_bit_counter;
+            }
+
+            packed_words
+        };
+        let max_rot_computations = (1..=max_rot)
+            .map(|rot| {
+                points
+                    .get(&rot)
+                    .map(|point| U256::from(point.ptr().value().as_usize()))
+                    .unwrap_or(U256::from(0))
+            })
+            .collect_vec();
+        let min_rot_computations = (min_rot..0)
+            .rev()
+            .map(|rot| {
+                points
+                    .get(&rot)
+                    .map(|point| U256::from(point.ptr().value().as_usize()))
+                    .unwrap_or(U256::from(0))
+            })
+            .collect_vec();
+        chain!(
+            pack_words(max_rot_computations, None).into_iter(),
+            pack_words(
+                min_rot_computations,
+                Some(U256::from(points[&0].ptr().value().as_usize())),
+            )
+            .into_iter()
+        )
+        .collect_vec()
+    };
+    PcsDataEncoded {
+        point_computations: max_rot_computations,
+    }
+
+    // let mu = get_memory_ptr(theta_mptr, 7, &separate);
+    // let vanishing_computations = chain![
+    //     [format!("let mu := mload({mu})").to_string()],
+    //     {
+    //         let mptr = mu_minus_points.first_key_value().unwrap().1.ptr();
+    //         let mptr_end = mptr + mu_minus_points.len();
+    //         for_loop(
+    //             [
+    //                 format!("let mptr := {mptr}"),
+    //                 format!("let mptr_end := {mptr_end}"),
+    //                 format!("let point_mptr := {free_mptr}"),
+    //             ],
+    //             "lt(mptr, mptr_end)",
+    //             [
+    //                 "mptr := add(mptr, 0x20)",
+    //                 "point_mptr := add(point_mptr, 0x20)",
+    //             ]
+    //             .map(str::to_string),
+    //             ["mstore(mptr, addmod(mu, sub(R, mload(point_mptr)), R))".to_string()],
+    //         )
+    //     },
+    //     ["let s".to_string()],
+    //     chain![
+    //         [format!(
+    //             "s := {}",
+    //             mu_minus_points[sets[0].rots().first().unwrap()]
+    //         )],
+    //         chain![sets[0].rots().iter().skip(1)]
+    //             .map(|rot| { format!("s := mulmod(s, {}, R)", mu_minus_points[rot]) }),
+    //         [format!("mstore({}, s)", vanishing_0.ptr())],
+    //     ],
+    //     ["let diff".to_string()],
+    //     izip!(0.., &sets, &diffs).flat_map(|(set_idx, set, diff)| {
+    //         chain![
+    //             [set.diffs()
+    //                 .first()
+    //                 .map(|rot| format!("diff := {}", mu_minus_points[rot]))
+    //                 .unwrap_or_else(|| "diff := 1".to_string())],
+    //             chain![set.diffs().iter().skip(1)]
+    //                 .map(|rot| { format!("diff := mulmod(diff, {}, R)", mu_minus_points[rot]) }),
+    //             [format!("mstore({}, diff)", diff.ptr())],
+    //             (set_idx == 0).then(|| format!("mstore({}, diff)", diff_0.ptr())),
+    //         ]
+    //     })
+    // ]
+    // .collect_vec();
+
+    // let coeff_computations = izip!(&sets, &coeffs)
+    //     .map(|(set, coeffs)| {
+    //         let coeff_points = set
+    //             .rots()
+    //             .iter()
+    //             .map(|rot| &point_vars[rot])
+    //             .enumerate()
+    //             .map(|(i, rot_i)| {
+    //                 set.rots()
+    //                     .iter()
+    //                     .map(|rot| &point_vars[rot])
+    //                     .enumerate()
+    //                     .filter_map(|(j, rot_j)| (i != j).then_some((rot_i, rot_j)))
+    //                     .collect_vec()
+    //             })
+    //             .collect_vec();
+    //         chain![
+    //             set.rots()
+    //                 .iter()
+    //                 .map(|rot| { format!("let {} := {}", &point_vars[rot], points[rot]) }),
+    //             ["let coeff".to_string()],
+    //             izip!(set.rots(), &coeff_points, coeffs).flat_map(
+    //                 |(rot_i, coeff_points, coeff)| chain![
+    //                     [coeff_points
+    //                         .first()
+    //                         .map(|(point_i, point_j)| {
+    //                             format!("coeff := addmod({point_i}, sub(R, {point_j}), R)")
+    //                         })
+    //                         .unwrap_or_else(|| { "coeff := 1".to_string() })],
+    //                     coeff_points.iter().skip(1).map(|(point_i, point_j)| {
+    //                         let item = format!("addmod({point_i}, sub(R, {point_j}), R)");
+    //                         format!("coeff := mulmod(coeff, {item}, R)")
+    //                     }),
+    //                     [
+    //                         format!("coeff := mulmod(coeff, {}, R)", mu_minus_points[rot_i]),
+    //                         format!("mstore({}, coeff)", coeff.ptr())
+    //                     ],
+    //                 ]
+    //             )
+    //         ]
+    //         .collect_vec()
+    //     })
+    //     .collect_vec();
+
+    // let normalized_coeff_computations = chain![
+    //     [
+    //         format!("success := batch_invert(success, 0, {first_batch_invert_end})"),
+    //         format!("let diff_0_inv := {diff_0}"),
+    //         format!("mstore({}, diff_0_inv)", diffs[0].ptr()),
+    //     ],
+    //     for_loop(
+    //         [
+    //             format!("let mptr := {}", diffs[0].ptr() + 1),
+    //             format!("let mptr_end := {}", diffs[0].ptr() + sets.len()),
+    //         ],
+    //         "lt(mptr, mptr_end)",
+    //         ["mptr := add(mptr, 0x20)".to_string()],
+    //         ["mstore(mptr, mulmod(mload(mptr), diff_0_inv, R))".to_string()],
+    //     ),
+    // ]
+    // .collect_vec();
+
+    // let r_evals_computations = izip!(0.., &sets, &coeffs, &diffs, &r_evals).map(
+    //     |(set_idx, set, coeffs, set_coeff, r_eval)| {
+    //         let is_single_rot_set = set.rots().len() == 1;
+    //         chain![
+    //             is_single_rot_set.then(|| format!("let coeff := {}", coeffs[0])),
+    //             [
+    //                 format!("let zeta := mload({})", zeta).as_str(),
+    //                 "let r_eval := 0"
+    //             ]
+    //             .map(str::to_string),
+    //             if is_single_rot_set {
+    //                 let eval_groups = set.evals().iter().rev().fold(
+    //                     Vec::<Vec<&Word>>::new(),
+    //                     |mut eval_groups, evals| {
+    //                         let eval = &evals[0];
+    //                         if let Some(last_group) = eval_groups.last_mut() {
+    //                             let last_eval = **last_group.last().unwrap();
+    //                             if last_eval.ptr().value().is_integer()
+    //                                 && last_eval.ptr() - 1 == eval.ptr()
+    //                             {
+    //                                 last_group.push(eval)
+    //                             } else {
+    //                                 eval_groups.push(vec![eval])
+    //                             }
+    //                             eval_groups
+    //                         } else {
+    //                             vec![vec![eval]]
+    //                         }
+    //                     },
+    //                 );
+    //                 chain![eval_groups.iter().enumerate()]
+    //                     .flat_map(|(group_idx, evals)| {
+    //                         if evals.len() < 3 {
+    //                             chain![evals.iter().enumerate()]
+    //                                 .flat_map(|(eval_idx, eval)| {
+    //                                     let is_first_eval = group_idx == 0 && eval_idx == 0;
+    //                                     let item = format!("mulmod(coeff, {eval}, R)");
+    //                                     chain![
+    //                                         (!is_first_eval).then(|| format!(
+    //                                             "r_eval := mulmod(r_eval, zeta, R)"
+    //                                         )),
+    //                                         [format!("r_eval := addmod(r_eval, {item}, R)")],
+    //                                     ]
+    //                                 })
+    //                                 .collect_vec()
+    //                         } else {
+    //                             let item = "mulmod(coeff, calldataload(mptr), R)";
+    //                             for_loop(
+    //                                 [
+    //                                     format!("let mptr := {}", evals[0].ptr()),
+    //                                     format!("let mptr_end := {}", evals[0].ptr() - evals.len()),
+    //                                 ],
+    //                                 "lt(mptr_end, mptr)".to_string(),
+    //                                 ["mptr := sub(mptr, 0x20)".to_string()],
+    //                                 [format!(
+    //                                     "r_eval := addmod(mulmod(r_eval, zeta, R), {item}, R)"
+    //                                 )],
+    //                             )
+    //                         }
+    //                     })
+    //                     .collect_vec()
+    //             } else {
+    //                 chain![set.evals().iter().enumerate().rev()]
+    //                     .flat_map(|(idx, evals)| {
+    //                         chain![
+    //                             izip!(evals, coeffs).map(|(eval, coeff)| {
+    //                                 let item = format!("mulmod({coeff}, {eval}, R)");
+    //                                 format!("r_eval := addmod(r_eval, {item}, R)")
+    //                             }),
+    //                             (idx != 0).then(|| format!("r_eval := mulmod(r_eval, zeta, R)")),
+    //                         ]
+    //                     })
+    //                     .collect_vec()
+    //             },
+    //             (set_idx != 0).then(|| format!("r_eval := mulmod(r_eval, {set_coeff}, R)")),
+    //             [format!("mstore({}, r_eval)", r_eval.ptr())],
+    //         ]
+    //         .collect_vec()
+    //     },
+    // );
+
+    // let coeff_sums_computation = izip!(&coeffs, &sums).map(|(coeffs, sum)| {
+    //     let (coeff_0, rest_coeffs) = coeffs.split_first().unwrap();
+    //     chain![
+    //         [format!("let sum := {coeff_0}")],
+    //         rest_coeffs
+    //             .iter()
+    //             .map(|coeff_mptr| format!("sum := addmod(sum, {coeff_mptr}, R)")),
+    //         [format!("mstore({}, sum)", sum.ptr())],
+    //     ]
+    //     .collect_vec()
+    // });
+
+    // let nu = get_memory_ptr(theta_mptr, 6, &separate);
+    // let mu = get_memory_ptr(theta_mptr, 7, &separate);
+    // let r_eval = get_memory_ptr(theta_mptr, 21, &separate);
+    // let pairing_lhs_x = get_memory_ptr(theta_mptr, 22, &separate);
+    // let pairing_lhs_y = get_memory_ptr(theta_mptr, 23, &separate);
+    // let pairing_rhs_x = get_memory_ptr(theta_mptr, 24, &separate);
+    // let pairing_rhs_y = get_memory_ptr(theta_mptr, 25, &separate);
+    // let r_eval_computations = chain![
+    //     for_loop(
+    //         [
+    //             format!("let mptr := 0x00"),
+    //             format!("let mptr_end := {second_batch_invert_end}"),
+    //             format!("let sum_mptr := {}", sums[0].ptr()),
+    //         ],
+    //         "lt(mptr, mptr_end)",
+    //         ["mptr := add(mptr, 0x20)", "sum_mptr := add(sum_mptr, 0x20)"].map(str::to_string),
+    //         ["mstore(mptr, mload(sum_mptr))".to_string()],
+    //     ),
+    //     [
+    //         format!("success := batch_invert(success, 0, {second_batch_invert_end})"),
+    //         format!(
+    //             "let r_eval := mulmod(mload({}), {}, R)",
+    //             second_batch_invert_end - 1,
+    //             r_evals.last().unwrap()
+    //         )
+    //     ],
+    //     for_loop(
+    //         [
+    //             format!("let sum_inv_mptr := {}", second_batch_invert_end - 2),
+    //             format!("let sum_inv_mptr_end := {second_batch_invert_end}"),
+    //             format!("let r_eval_mptr := {}", r_evals[r_evals.len() - 2].ptr()),
+    //         ],
+    //         "lt(sum_inv_mptr, sum_inv_mptr_end)",
+    //         [
+    //             "sum_inv_mptr := sub(sum_inv_mptr, 0x20)",
+    //             "r_eval_mptr := sub(r_eval_mptr, 0x20)"
+    //         ]
+    //         .map(str::to_string),
+    //         [
+    //             format!("r_eval := mulmod(r_eval, mload({nu}), R)").as_str(),
+    //             "r_eval := addmod(r_eval, mulmod(mload(sum_inv_mptr), mload(r_eval_mptr), R), R)"
+    //         ]
+    //         .map(str::to_string),
+    //     ),
+    //     [format!("mstore({r_eval}, r_eval)")],
+    // ]
+    // .collect_vec();
+
+    // let pairing_input_computations = chain![
+    //     [format!("let nu := mload({nu})").to_string()],
+    //     izip!(0.., &sets, &diffs).flat_map(|(set_idx, set, set_coeff)| {
+    //         let is_first_set = set_idx == 0;
+    //         let is_last_set = set_idx == sets.len() - 1;
+
+    //         let ec_add = &format!("ec_add_{}", if is_first_set { "acc" } else { "tmp" });
+    //         let ec_mul = &format!("ec_mul_{}", if is_first_set { "acc" } else { "tmp" });
+    //         let acc_x = Ptr::memory(0x00) + if is_first_set { 0 } else { 4 };
+    //         let acc_y = acc_x + 1;
+
+    //         let comm_groups = set.comms().iter().rev().skip(1).fold(
+    //             Vec::<(Location, Vec<&EcPoint>)>::new(),
+    //             |mut comm_groups, comm| {
+    //                 if let Some(last_group) = comm_groups.last_mut() {
+    //                     let last_comm = **last_group.1.last().unwrap();
+    //                     if last_group.0 == comm.loc()
+    //                         && last_comm.x().ptr().value().is_integer()
+    //                         && last_comm.x().ptr() - 2 == comm.x().ptr()
+    //                     {
+    //                         last_group.1.push(comm)
+    //                     } else {
+    //                         comm_groups.push((comm.loc(), vec![comm]))
+    //                     }
+    //                     comm_groups
+    //                 } else {
+    //                     vec![(comm.loc(), vec![comm])]
+    //                 }
+    //             },
+    //         );
+    //         let zeta_mptr = &zeta;
+    //         chain![
+    //             set.comms()
+    //                 .last()
+    //                 .map(|comm| {
+    //                     [
+    //                         format!("mstore({acc_x}, {})", comm.x()),
+    //                         format!("mstore({acc_y}, {})", comm.y()),
+    //                     ]
+    //                 })
+    //                 .into_iter()
+    //                 .flatten(),
+    //             comm_groups.into_iter().flat_map(move |(loc, comms)| {
+    //                 if comms.len() < 3 {
+    //                     comms
+    //                         .iter()
+    //                         .flat_map(|comm| {
+    //                             let (x, y) = (comm.x(), comm.y());
+    //                             [
+    //                                 format!("success := {ec_mul}(success, mload({zeta_mptr}))"),
+    //                                 format!("success := {ec_add}(success, {x}, {y})"),
+    //                             ]
+    //                         })
+    //                         .collect_vec()
+    //                 } else {
+    //                     let mptr = comms.first().unwrap().x().ptr();
+    //                     let mptr_end = mptr - 2 * comms.len();
+    //                     let x = Word::from(Ptr::new(loc, "mptr"));
+    //                     let y = Word::from(Ptr::new(loc, "add(mptr, 0x20)"));
+    //                     for_loop(
+    //                         [
+    //                             format!("let mptr := {mptr}"),
+    //                             format!("let mptr_end := {mptr_end}"),
+    //                         ],
+    //                         "lt(mptr_end, mptr)",
+    //                         ["mptr := sub(mptr, 0x40)".to_string()],
+    //                         [
+    //                             format!("success := {ec_mul}(success, mload({zeta_mptr}))"),
+    //                             format!("success := {ec_add}(success, {x}, {y})"),
+    //                         ],
+    //                     )
+    //                 }
+    //             }),
+    //             (!is_first_set)
+    //                 .then(|| {
+    //                     let scalar = format!("mulmod(nu, {set_coeff}, R)");
+    //                     chain![
+    //                         [
+    //                             format!("success := ec_mul_tmp(success, {scalar})"),
+    //                             format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
+    //                         ],
+    //                         (!is_last_set).then(|| format!("nu := mulmod(nu, mload({nu}), R)"))
+    //                     ]
+    //                 })
+    //                 .into_iter()
+    //                 .flatten(),
+    //         ]
+    //         .collect_vec()
+    //     }),
+    //     [
+    //         format!("mstore(0x80, mload({}))", g1_x),
+    //         format!("mstore(0xa0, mload({}))", g1_y),
+    //         format!("success := ec_mul_tmp(success, sub(R, mload({r_eval})))"),
+    //         format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
+    //         format!("mstore(0x80, {})", w.x()),
+    //         format!("mstore(0xa0, {})", w.y()),
+    //         format!("success := ec_mul_tmp(success, sub(R, {vanishing_0}))"),
+    //         format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
+    //         format!("mstore(0x80, {})", w_prime.x()),
+    //         format!("mstore(0xa0, {})", w_prime.y()),
+    //         format!("success := ec_mul_tmp(success, mload({mu}))"),
+    //         format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
+    //         format!("mstore({pairing_lhs_x}, mload(0x00))"),
+    //         format!("mstore({pairing_lhs_y}, mload(0x20))"),
+    //         format!("mstore({pairing_rhs_x}, {})", w_prime.x()),
+    //         format!("mstore({pairing_rhs_y}, {})", w_prime.y()),
+    //     ],
+    // ]
+    // .collect_vec();
+
+    // chain![
+    //     [point_computations, vanishing_computations],
+    //     coeff_computations,
+    //     [normalized_coeff_computations],
+    //     r_evals_computations,
+    //     coeff_sums_computation,
+    //     [r_eval_computations, pairing_input_computations],
+    // ]
+    // .collect_vec()
 }

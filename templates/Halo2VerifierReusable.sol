@@ -306,37 +306,31 @@ contract Halo2Verifier {
                 }
                 ret1 := addmod(ret1, beta, R)
             }
-            
-            function expression_evals(fsmp, code_len, code_ptr) {
-                for { let i := 0 } lt(i, code_len) { i := add(i, 0x20) } {
-                    /// @dev Note we can optimize the amount of space the expressions take up by packing 32/5 == 6 expressions into a single word
-                    let expression := mload(add(code_ptr, i))
-                    // Load in the least significant byte of the `expression` word to get the operation type 
-                    // Then determine which operation to peform and then store the result in the next available memory slot.
-                    switch and(expression, 0xFF)
-                    // 0x00 => Advice/Fixed expression
-                    case 0x00 {
-                        // Load the calldata ptr from the expression, which come from the 2nd and 3rd least significant bytes.
-                        mstore(add(fsmp, i), calldataload(and(shr(8, expression), 0xFFFF)))
-                    } 
-                    // 0x01 => Negated expression
-                    case 0x01 {
-                        // Load the memory ptr from the expression, which come from the 2nd and 3rd least significant bytes
-                        mstore(add(fsmp, i), sub(R, mload(and(shr(8, expression), 0xFFFF))))
+
+            function point_rots(pcs_computations, pcs_ptr, word_shift, x_pow_of_omega, omega) -> ret0, ret1 {
+                // Extract the 32 LSG bits (4 bytes) from the pcs_computations word to get the max rot
+                let values_max_rot := and(pcs_computations, 0xFFFFFFFF)
+                pcs_computations := shr(32, pcs_computations)
+                for { let i := 0 } lt(i, values_max_rot) { i := add(i, 1) } {
+                    let value := and(pcs_computations, 0xFFFF)
+                    if not(eq(value, 0)) {
+                        mstore(value, x_pow_of_omega)
                     }
-                    // 0x02 => Sum expression
-                    case 0x02 {
-                        // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
-                        // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
-                        mstore(add(fsmp, i), addmod(mload(and(shr(8, expression), 0xFFFF)),mload(and(shr(24, expression), 0xFFFF)),R))
+                    if eq(i, sub(values_max_rot, 1)) {
+                        break
                     }
-                    // 0x03 => Product/scalar expression
-                    case 0x03 {
-                        // Load the lhs operand memory ptr from the expression, which comes from the 2nd and 3rd least significant bytes
-                        // Load the rhs operand memory ptr from the expression, which comes from the 4th and 5th least significant bytes
-                        mstore(add(fsmp, i), mulmod(mload(and(shr(8, expression), 0xFFFF)),mload(and(shr(24, expression), 0xFFFF)),R))
+                    x_pow_of_omega := mulmod(x_pow_of_omega, omega, R)
+                    word_shift := add(word_shift, 16)
+                    pcs_computations := shr(16, pcs_computations)
+                    // We can pack up to 
+                    if eq(word_shift, 256) {
+                        word_shift := 0
+                        pcs_ptr := add(pcs_ptr, 0x20)
+                        pcs_computations := mload(pcs_ptr)
                     }
                 }
+                ret0 := x_pow_of_omega
+                ret1 := pcs_ptr 
             }
 
             // Modulus
@@ -568,10 +562,6 @@ contract Halo2Verifier {
 
 
             // Compute quotient evavluation
-            // TODO:
-            // [X] Gate computations
-            // [X] Permutation computations
-            // [X] Lookup computations
             {
                 let quotient_eval_numer
                 let y := mload(add(theta_mptr, 0x60))
@@ -765,7 +755,35 @@ contract Halo2Verifier {
             }
 
             // Compute pairing lhs and rhs
+            // TODO:
+            // [X] point_computations
+            // [] vanishing_computation
+            // [] coeff_computations
+            // [] formalized_coeff_computations
+            // [] r_evals_computations
+            // [] coeff_sums_computation
+            // [] r_eval_computations
+            // [] pairing_input_computations
             {
+                // point_computations 
+                let pcs_ptr := add(vk_mptr, mload(add(vk_mptr, {{ vk_const_offsets["pcs_computations_len_offset"]|hex() }})))
+                let pcs_computations := mload(pcs_ptr)
+                {
+                    let x := mload(add(theta_mptr, 0x80))
+                    let omega := mload(add(vk_mptr, {{ vk_const_offsets["omega"]|hex() }}))
+                    let omega_inv := mload(add(vk_mptr, {{ vk_const_offsets["omega_inv"]|hex() }}))
+                    let x_pow_of_omega := mulmod(x, omega, R)
+                    x_pow_of_omega, pcs_ptr := point_rots(pcs_computations, pcs_ptr, 32, x_pow_of_omega, omega)
+                    pcs_ptr := add(pcs_ptr, 0x20)
+                    pcs_computations := mload(pcs_ptr)
+                    // Compute interm point
+                    mstore(and(pcs_computations, 0xFFFF), x)
+                    x_pow_of_omega := mulmod(x, omega_inv, R)
+                    pcs_computations := shr(16, pcs_computations)
+                    x_pow_of_omega, pcs_ptr := point_rots(pcs_computations, pcs_ptr, 48, x_pow_of_omega, omega_inv)
+                    pcs_ptr := add(pcs_ptr, 0x20)
+                    pop(x_pow_of_omega)
+                }
                 {%- for code_block in pcs_computations %}
                 {
                     {%- for line in code_block %}

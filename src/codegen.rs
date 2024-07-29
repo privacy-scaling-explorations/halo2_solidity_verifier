@@ -16,6 +16,7 @@ use halo2_proofs::{
     poly::{commitment::ParamsProver, kzg::commitment::ParamsKZG, Rotation},
 };
 use itertools::{chain, Itertools};
+use pcs::bdfg21_computations_separate;
 use ruint::aliases::U256;
 use std::{
     collections::HashMap,
@@ -204,6 +205,7 @@ impl<'a> SolidityGenerator<'a> {
                 ("gate_computations_len_offset", U256::from(0)),
                 ("permutation_computations_len_offset", U256::from(0)),
                 ("lookup_computations_len_offset", U256::from(0)),
+                ("pcs_computations_len_offset", U256::from(0)),
                 ("num_evals", U256::from(0)),
                 ("num_neg_lagranges", U256::from(0)),
             ]
@@ -322,6 +324,7 @@ impl<'a> SolidityGenerator<'a> {
             gate_computations: GateDataEncoded::default(),
             permutation_computations: PermutationDataEncoded::default(),
             lookup_computations: LookupsDataEncoded::default(),
+            pcs_computations: pcs::PcsDataEncoded::default(),
         };
 
         if !separate {
@@ -370,10 +373,15 @@ impl<'a> SolidityGenerator<'a> {
             vk_lookup_const_table_dummy,
         );
 
-        // Fill in the gate computations with dummy values. (maintains the correct shape)
+        // Fill in the quotient eval computations with dummy values. (maintains the correct shape)
         let gate_computations_dummy = evaluator_dummy.gate_computations();
         let permutation_computations_dummy = evaluator_dummy.permutation_computations();
         let lookup_computations_dummy = evaluator_dummy.lookup_computations(0);
+        // Same for the pcs computations
+        let pcs_computations_dummy = match self.scheme {
+            Bdfg21 => bdfg21_computations_separate(&self.meta, &dummy_data),
+            Gwc19 => unimplemented!(),
+        };
 
         let num_advices = self.meta.num_advices();
         let num_user_challenges = self.meta.num_challenges();
@@ -406,6 +414,8 @@ impl<'a> SolidityGenerator<'a> {
             gate_computations_len_offset + (0x20 * gate_computations_dummy.len());
         let lookup_computations_len_offset =
             permutations_computations_len_offset + (0x20 * permutation_computations_dummy.len());
+        let pcs_computations_len_offset =
+            lookup_computations_len_offset + (0x20 * lookup_computations_dummy.len());
 
         set_constant_value(&mut constants, "instance_cptr", instance_cptr);
         set_constant_value(
@@ -438,6 +448,11 @@ impl<'a> SolidityGenerator<'a> {
             "lookup_computations_len_offset",
             U256::from(lookup_computations_len_offset),
         );
+        set_constant_value(
+            &mut constants,
+            "pcs_computations_len_offset",
+            U256::from(pcs_computations_len_offset),
+        );
 
         // Recreate the vk with the correct shape
         let mut vk = Halo2VerifyingKey {
@@ -449,6 +464,7 @@ impl<'a> SolidityGenerator<'a> {
             gate_computations: gate_computations_dummy,
             permutation_computations: permutation_computations_dummy,
             lookup_computations: lookup_computations_dummy,
+            pcs_computations: pcs_computations_dummy,
         };
 
         // Now generate the real vk_mptr with a vk that has the correct length

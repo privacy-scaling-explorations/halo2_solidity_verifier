@@ -77,7 +77,11 @@ contract Halo2VerifyingKey {
             mstore({{ (32 * (offset + input.expression.len() + 1))|hex_padded(4) }}, {{ input.vars|hex_padded(64) }}) // input_vars [{{ loop.index0 }}]
             {%- endfor %}
             {%- endfor %}
-            return(0, {{ (32 * (constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 + gate_computations.len() + permutation_computations.len() + lookup_computations.len() ))|hex() }})
+            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 + gate_computations.len() + permutation_computations.len() + lookup_computations.len() %}
+            {%- for point_word in pcs_computations.point_computations %}
+            mstore({{ (32 * (offset + loop.index0))|hex_padded(4) }}, {{ point_word|hex_padded(64) }}) // point_computations[{{ loop.index0 }}]
+            {%- endfor %}
+            return(0, {{ (32 * (constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 + gate_computations.len() + permutation_computations.len() + lookup_computations.len() + pcs_computations.len()))|hex() }})
         }
     }
 }

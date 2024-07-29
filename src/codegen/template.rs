@@ -7,7 +7,10 @@ use ruint::aliases::U256;
 use std::collections::HashMap;
 use std::fmt;
 
-use super::evaluator::{GateDataEncoded, LookupsDataEncoded, PermutationDataEncoded};
+use super::{
+    evaluator::{GateDataEncoded, LookupsDataEncoded, PermutationDataEncoded},
+    pcs::PcsDataEncoded,
+};
 
 #[derive(Template)]
 #[template(path = "Halo2VerifyingKey.sol")]
@@ -20,6 +23,7 @@ pub(crate) struct Halo2VerifyingKey {
     pub(crate) gate_computations: GateDataEncoded,
     pub(crate) permutation_computations: PermutationDataEncoded,
     pub(crate) lookup_computations: LookupsDataEncoded,
+    pub(crate) pcs_computations: PcsDataEncoded,
 }
 
 impl Halo2VerifyingKey {
@@ -31,6 +35,7 @@ impl Halo2VerifyingKey {
             + (self.gate_computations.len() * 0x20)
             + (self.permutation_computations.len() * 0x20)
             + (self.lookup_computations.len() * 0x20)
+            + (self.pcs_computations.len() * 0x20)
     }
 }
 
