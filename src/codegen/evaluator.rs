@@ -790,7 +790,7 @@ where
                 *fsm_usages.iter().max().unwrap()
             })
             .collect_vec();
-        let input_expressions_fsm_usage = *input_expressions_fsm_usage.iter().max().unwrap();
+        let input_expressions_fsm_usage = *input_expressions_fsm_usage.iter().max().unwrap_or(0x0);
 
         itertools::max([
             gate_computation_fsm_usage,
