@@ -784,6 +784,61 @@ contract Halo2Verifier {
                     pcs_ptr := add(pcs_ptr, 0x20)
                     pop(x_pow_of_omega)
                 }
+
+                // vanishing_computations 
+                {
+                    let mu := mload(add(theta_mptr, 0xE0))
+                    pcs_computations := mload(pcs_ptr)
+                    mstore(0x20, 1)
+                    for
+                        {
+                            let mptr := and(pcs_computations, 0xFFFF)
+                            pcs_computations := shr(16, pcs_computations)
+                            let mptr_end := and(pcs_computations, 0xFFFF)
+                            pcs_computations := shr(16, pcs_computations)
+                            let point_mptr := and(pcs_computations, 0xFFFF)
+                        }
+                        lt(mptr, mptr_end)
+                        {
+                            mptr := add(mptr, 0x20)
+                            point_mptr := add(point_mptr, 0x20)
+                        }
+                    {
+                        mstore(mptr, addmod(mu, sub(R, mload(point_mptr)), R))
+                    }
+                    pop(mu)
+                    pcs_computations := shr(16, pcs_computations)
+                    let s
+                    s := mload(and(pcs_computations, 0xFFFF))
+                    pcs_computations := shr(16, pcs_computations)
+                    for {  } pcs_computations {  } {
+                        s := mulmod(s, mload(and(pcs_computations, 0xFFFF)), R)
+                        pcs_computations := shr(16, pcs_computations)
+                    }
+                    pcs_ptr := add(pcs_ptr, 0x20)
+                    pcs_computations := mload(pcs_ptr)
+                    mstore(and(pcs_computations, 0xFFFF), s)
+                    pcs_computations := shr(16, pcs_computations)
+                    let diff
+                    let sets_len := and(pcs_computations, 0xFFFF)
+                    pcs_ptr := add(pcs_ptr, 0x20)
+                    pcs_computations := mload(pcs_ptr)
+                    for { let i := 0 } lt(i, sets_len) { i := add(i, 1) } {
+                        diff := mload(and(pcs_computations, 0xFFFF))
+                        pcs_computations := shr(16, pcs_computations)
+                        for { } and(pcs_computations, 0xFFFF) { } {
+                            diff := mulmod(diff, mload(and(pcs_computations, 0xFFFF)), R)
+                            pcs_computations := shr(16, pcs_computations)
+                        }
+                        pcs_computations := shr(16, pcs_computations)
+                        mstore(and(pcs_computations, 0xFFFF), diff)
+                        if eq(i, 0) {
+                            mstore(0x00, diff)
+                        }
+                        pcs_ptr := add(pcs_ptr, 0x20)
+                        pcs_computations := mload(pcs_ptr)
+                    }
+                }
                 {%- for code_block in pcs_computations %}
                 {
                     {%- for line in code_block %}

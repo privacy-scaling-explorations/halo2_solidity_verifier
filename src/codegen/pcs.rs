@@ -668,6 +668,11 @@ pub(crate) fn bdfg21_computations(
     } else {
         point_computations
     };
+    let vanishing_computations = if separate {
+        Vec::new()
+    } else {
+        vanishing_computations
+    };
 
     chain![
         [point_computations, vanishing_computations],
@@ -685,12 +690,13 @@ pub(crate) fn bdfg21_computations(
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct PcsDataEncoded {
     pub(crate) point_computations: Vec<U256>,
+    pub(crate) vanishing_computations: Vec<U256>,
 }
 
 // implement length of PcsDataEncoded
 impl PcsDataEncoded {
     pub fn len(&self) -> usize {
-        self.point_computations.len()
+        self.point_computations.len() + self.vanishing_computations.len()
     }
 }
 
@@ -722,19 +728,19 @@ pub(crate) fn bdfg21_computations_separate(
     let free_mptr = diff_0.ptr() + 2 * (1 + num_coeffs) + 6;
 
     let point_mptr = free_mptr;
-    // let mu_minus_point_mptr = point_mptr + superset.len();
-    // let vanishing_0_mptr = mu_minus_point_mptr + superset.len();
-    // let diff_mptr = vanishing_0_mptr + 1;
+    let mu_minus_point_mptr = point_mptr + superset.len();
+    let vanishing_0_mptr = mu_minus_point_mptr + superset.len();
+    let diff_mptr = vanishing_0_mptr + 1;
     // let r_eval_mptr = diff_mptr + sets.len();
     // let sum_mptr = r_eval_mptr + sets.len();
 
     // let point_vars =
     //     izip!(&superset, (0..).map(|idx| format!("point_{idx}"))).collect::<BTreeMap<_, _>>();
     let points = izip!(&superset, Word::range(point_mptr)).collect::<BTreeMap<_, _>>();
-    // let mu_minus_points =
-    //     izip!(&superset, Word::range(mu_minus_point_mptr)).collect::<BTreeMap<_, _>>();
-    // let vanishing_0 = Word::from(vanishing_0_mptr);
-    // let diffs = Word::range(diff_mptr).take(sets.len()).collect_vec();
+    let mu_minus_points =
+        izip!(&superset, Word::range(mu_minus_point_mptr)).collect::<BTreeMap<_, _>>();
+    let vanishing_0 = Word::from(vanishing_0_mptr);
+    let diffs = Word::range(diff_mptr).take(sets.len()).collect_vec();
     // let r_evals = Word::range(r_eval_mptr).take(sets.len()).collect_vec();
     // let sums = Word::range(sum_mptr).take(sets.len()).collect_vec();
     // if separate then we load in omega and omega_inv from vk_mptr + hardcoded offset.
@@ -754,7 +760,7 @@ pub(crate) fn bdfg21_computations_separate(
     // let x = get_memory_ptr(theta_mptr, 4, &separate);
 
     // let zeta = get_memory_ptr(theta_mptr, 5, &separate);
-    let max_rot_computations: Vec<U256> = {
+    let point_computations: Vec<U256> = {
         let pack_words = |points: Vec<U256>, interm_point: Option<U256>| {
             let mut packed_words: Vec<U256> = vec![U256::from(0)];
             let mut bit_counter = 32;
@@ -812,11 +818,74 @@ pub(crate) fn bdfg21_computations_separate(
         )
         .collect_vec()
     };
-    PcsDataEncoded {
-        point_computations: max_rot_computations,
-    }
 
-    // let mu = get_memory_ptr(theta_mptr, 7, &separate);
+    let vanishing_computations: Vec<U256> = {
+        let pack_mptrs_and_s_ptrs = {
+            let mptr = mu_minus_points.first_key_value().unwrap().1.ptr();
+            let mptr_word = U256::from(mptr.value().as_usize());
+            let mptr_end = mptr + mu_minus_points.len();
+            let mptr_end_word = U256::from(mptr_end.value().as_usize());
+            let mut packed_word = U256::from(0);
+            // start packing the mptrs
+            packed_word |= mptr_word;
+            packed_word |= mptr_end_word << 16;
+            packed_word |= U256::from(free_mptr.value().as_usize()) << 32;
+            let mut offset = 48;
+            // start packing the s_ptrs
+            sets[0].rots().iter().for_each(|rot| {
+                // panic if offset is exceeds 256
+                assert!(offset <= 256);
+                packed_word |= U256::from(mu_minus_points[rot].ptr().value().as_usize()) << offset;
+                offset += 16;
+            });
+            packed_word
+        };
+        let pack_vanishing_0_and_sets_len: ruint::Uint<256, 4> = {
+            let vanishing_0_word = U256::from(vanishing_0.ptr().value().as_usize());
+            let sets_len = U256::from(sets.len());
+            let mut packed_word = U256::from(0);
+            packed_word |= vanishing_0_word;
+            packed_word |= sets_len << 16;
+            packed_word
+        };
+        let pack_set_diffs_words: Vec<ruint::Uint<256, 4>> = {
+            izip!(&sets, &diffs)
+                .map(|(set, diff)| {
+                    let mut packed_word = U256::from(0);
+                    let mut offset = 0;
+                    set.diffs().iter().for_each(|rot| {
+                        packed_word |=
+                            U256::from(mu_minus_points[rot].ptr().value().as_usize()) << offset;
+                        offset += 16;
+                    });
+                    if set.diffs.is_empty() {
+                        // 0x20 is where 1 is stored in memory in this block
+                        packed_word |= U256::from(0x20) << offset;
+                        offset += 16;
+                    }
+                    // pack a blank word
+                    packed_word |= U256::from(0) << offset;
+                    offset += 16;
+                    // pack the diff.ptr()
+                    packed_word |= U256::from(diff.ptr().value().as_usize()) << offset;
+                    assert!(
+                        offset <= 256,
+                        "The offset for packing the set diff words exceeds 256",
+                    );
+                    packed_word
+                })
+                .collect_vec()
+        };
+        chain!(
+            [pack_mptrs_and_s_ptrs, pack_vanishing_0_and_sets_len],
+            pack_set_diffs_words.into_iter()
+        )
+        .collect_vec()
+    };
+    PcsDataEncoded {
+        point_computations,
+        vanishing_computations,
+    }
     // let vanishing_computations = chain![
     //     [format!("let mu := mload({mu})").to_string()],
     //     {
