@@ -890,6 +890,27 @@ contract Halo2Verifier {
                         coeff_len_data := mload(add(i, 0x20))
                     }
                 }
+                // normalized_coeff_computations
+                {
+                    let norm_coeff_data := mload(pcs_ptr)
+                    success := batch_invert(success, 0, and(norm_coeff_data, 0xFFFF))
+                    norm_coeff_data := shr(16, norm_coeff_data)
+                    let diff_0_inv := mload(0x00)
+                    let mptr0 := and(norm_coeff_data, 0xFFFF)
+                    norm_coeff_data := shr(16, norm_coeff_data)
+                    mstore(mptr0, diff_0_inv)
+                    for
+                        {
+                            let mptr := add(mptr0, 0x20)
+                            let mptr_end := add(mptr0, and(norm_coeff_data, 0xFFFF))
+                        }
+                        lt(mptr, mptr_end)
+                        { mptr := add(mptr, 0x20) }
+                    {
+                        mstore(mptr, mulmod(mload(mptr), diff_0_inv, R))
+                    }
+                    pcs_ptr := add(pcs_ptr, 0x20)
+                }
                 {%- for code_block in pcs_computations %}
                 {
                     {%- for line in code_block %}

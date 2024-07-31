@@ -678,6 +678,11 @@ pub(crate) fn bdfg21_computations(
     } else {
         coeff_computations
     };
+    let normalized_coeff_computations = if separate {
+        Vec::new()
+    } else {
+        normalized_coeff_computations
+    };
 
     chain![
         [point_computations, vanishing_computations],
@@ -697,6 +702,7 @@ pub struct PcsDataEncoded {
     pub(crate) point_computations: Vec<U256>,
     pub(crate) vanishing_computations: Vec<U256>,
     pub(crate) coeff_computations: Vec<U256>,
+    pub(crate) normalized_coeff_computations: U256,
 }
 
 // implement length of PcsDataEncoded
@@ -705,6 +711,7 @@ impl PcsDataEncoded {
         self.point_computations.len()
             + self.vanishing_computations.len()
             + self.coeff_computations.len()
+            + 1 // normalized_coeff_computations
     }
 }
 
@@ -731,7 +738,7 @@ pub(crate) fn bdfg21_computations_separate(
         })
         .collect_vec();
 
-    // let first_batch_invert_end = diff_0.ptr() + 1 + num_coeffs;
+    let first_batch_invert_end = diff_0.ptr() + 1 + num_coeffs;
     // let second_batch_invert_end = diff_0.ptr() + sets.len();
     let free_mptr = diff_0.ptr() + 2 * (1 + num_coeffs) + 6;
 
@@ -948,55 +955,23 @@ pub(crate) fn bdfg21_computations_separate(
         chain!(coeff_len_words.into_iter(), coeff_data_words.into_iter()).collect_vec()
     };
 
+    let normalized_coeff_computations: U256 = {
+        let mut packed_word = U256::from(0);
+        let mut offset = 0;
+        packed_word |= U256::from(first_batch_invert_end.value().as_usize()) << offset;
+        offset += 16;
+        packed_word |= U256::from(diffs[0].ptr().value().as_usize()) << offset;
+        offset += 16;
+        packed_word |= U256::from(sets.len() * 32) << offset;
+        packed_word
+    };
+
     PcsDataEncoded {
         point_computations,
         vanishing_computations,
         coeff_computations,
+        normalized_coeff_computations,
     }
-
-    // let coeff_computations = izip!(&sets, &coeffs)
-    //     .map(|(set, coeffs)| {
-    //         let coeff_points = set
-    //             .rots()
-    //             .iter()
-    //             .map(|rot| &point_vars[rot])
-    //             .enumerate()
-    //             .map(|(i, rot_i)| {
-    //                 set.rots()
-    //                     .iter()
-    //                     .map(|rot| &point_vars[rot])
-    //                     .enumerate()
-    //                     .filter_map(|(j, rot_j)| (i != j).then_some((rot_i, rot_j)))
-    //                     .collect_vec()
-    //             })
-    //             .collect_vec();
-    //         chain![
-    //             set.rots()
-    //                 .iter()
-    //                 .map(|rot| { format!("let {} := {}", &point_vars[rot], points[rot]) }),
-    //             ["let coeff".to_string()],
-    //             izip!(set.rots(), &coeff_points, coeffs).flat_map(
-    //                 |(rot_i, coeff_points, coeff)| chain![
-    //                     [coeff_points
-    //                         .first()
-    //                         .map(|(point_i, point_j)| {
-    //                             format!("coeff := addmod({point_i}, sub(R, {point_j}), R)")
-    //                         })
-    //                         .unwrap_or_else(|| { "coeff := 1".to_string() })],
-    //                     coeff_points.iter().skip(1).map(|(point_i, point_j)| {
-    //                         let item = format!("addmod({point_i}, sub(R, {point_j}), R)");
-    //                         format!("coeff := mulmod(coeff, {item}, R)")
-    //                     }),
-    //                     [
-    //                         format!("coeff := mulmod(coeff, {}, R)", mu_minus_points[rot_i]),
-    //                         format!("mstore({}, coeff)", coeff.ptr())
-    //                     ],
-    //                 ]
-    //             )
-    //         ]
-    //         .collect_vec()
-    //     })
-    //     .collect_vec();
 
     // let normalized_coeff_computations = chain![
     //     [
