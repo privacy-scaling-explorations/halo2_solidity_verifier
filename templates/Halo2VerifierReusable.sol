@@ -322,7 +322,6 @@ contract Halo2Verifier {
                     x_pow_of_omega := mulmod(x_pow_of_omega, omega, R)
                     word_shift := add(word_shift, 16)
                     pcs_computations := shr(16, pcs_computations)
-                    // We can pack up to 
                     if eq(word_shift, 256) {
                         word_shift := 0
                         pcs_ptr := add(pcs_ptr, 0x20)
@@ -331,6 +330,41 @@ contract Halo2Verifier {
                 }
                 ret0 := x_pow_of_omega
                 ret1 := pcs_ptr 
+            }
+
+            function coeff_computations(coeff_len_data, coeff_data) -> ret {
+                let coeff_len := and(coeff_len_data, 0xFF)
+                ret := shr(8, coeff_len_data)
+                switch coeff_len
+                case 0x01 {
+                    // We only encode the points if the coeff length is greater than 1.
+                    // Otherwise we just encode the mu_minus_point and coeff ptr. 
+                    mstore(and(shr(16, coeff_data), 0xFFFF), mod(mload(and(coeff_data, 0xFFFF)), R))
+                }
+                default {
+                    let coeff
+                    let offset_aggr := mul(coeff_len, 16)
+                    for { let i := 0 } lt(i, coeff_len) { i := add(i, 1) } {
+                        let first := 0x01
+                        let offset_base := mul(i, 16)
+                        let point_i := mload(and(shr(offset_base, coeff_data), 0xFFFF))
+                        for { let j:= 0 } lt(j, coeff_len) { j := add(j, 1) } {
+                            if eq(j, i) {
+                                continue
+                            } 
+                            if first {
+                                coeff := addmod(point_i, sub(R, mload(and(shr(mul(j, 16), coeff_data), 0xFFFF))), R)
+                                first := 0
+                                continue
+                            } 
+                            coeff := mulmod(coeff, addmod(point_i, sub(R, mload(and(shr(mul(j, 16), coeff_data), 0xFFFF))), R), R)
+                        }
+                        offset_base := add(offset_base, offset_aggr)
+                        coeff := mulmod(coeff, mload(and(shr(offset_base, coeff_data), 0xFFFF)), R)
+                        offset_base := add(offset_base, offset_aggr)
+                        mstore(and(shr(offset_base, coeff_data), 0xFFFF), coeff)
+                    }
+                }
             }
 
             // Modulus
@@ -637,8 +671,7 @@ contract Halo2Verifier {
                     mstore(0x40, mload(add(theta_mptr, 0x1E0))) // l_blind
                     mstore(0x60, mload(theta_mptr)) // theta
                     mstore(0x80, mload(add(theta_mptr, 0x20))) // beta
-                    let evals_ptr, end_ptr := soa_layout_metadata(0x3c0, vk_mptr) // TODO: Compute the end ptr of the lookup computations space
-                    // iterate through the input_tables_len
+                    let evals_ptr, end_ptr := soa_layout_metadata(0x3c0, vk_mptr)
                     if end_ptr {
                         // iterate through the input_tables_len
                         for { } lt(evals_ptr, end_ptr) { } {
@@ -757,8 +790,8 @@ contract Halo2Verifier {
             // Compute pairing lhs and rhs
             // TODO:
             // [X] point_computations
-            // [] vanishing_computation
-            // [] coeff_computations
+            // [x] vanishing_computation
+            // [x] coeff_computations
             // [] formalized_coeff_computations
             // [] r_evals_computations
             // [] coeff_sums_computation
@@ -837,6 +870,24 @@ contract Halo2Verifier {
                         }
                         pcs_ptr := add(pcs_ptr, 0x20)
                         pcs_computations := mload(pcs_ptr)
+                    }
+                }
+
+                // coeff_computations
+                {
+                    let coeff_len_data := mload(pcs_ptr)
+                    // Load in the least significant byte of the `coeff_len_data` word to get the total number of words we will need to load in
+                    // that contain the packed Vec<set.rots().len()>. 
+                    let end_ptr_packed_lens := add(pcs_ptr, mul(0x20, and(coeff_len_data, 0xFF)))
+                    coeff_len_data := shr(8, coeff_len_data)
+                    let i := pcs_ptr
+                    pcs_ptr := end_ptr_packed_lens
+                    for {  } lt(i, end_ptr_packed_lens) { i := add(i, 0x20) } {
+                        for {  } coeff_len_data { } {
+                            coeff_len_data := coeff_computations(coeff_len_data, mload(pcs_ptr))
+                            pcs_ptr := add(pcs_ptr, 0x20)
+                        }
+                        coeff_len_data := mload(add(i, 0x20))
                     }
                 }
                 {%- for code_block in pcs_computations %}

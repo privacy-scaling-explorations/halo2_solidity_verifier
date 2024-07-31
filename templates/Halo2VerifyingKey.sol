@@ -85,6 +85,10 @@ contract Halo2VerifyingKey {
             {%- for vanishing_word in pcs_computations.vanishing_computations %}
             mstore({{ (32 * (offset + loop.index0))|hex_padded(4) }}, {{ vanishing_word|hex_padded(64) }}) // vanishing_computations[{{ loop.index0 }}]
             {%- endfor %}
+            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 + gate_computations.len() + permutation_computations.len() + lookup_computations.len() + pcs_computations.point_computations.len() + pcs_computations.vanishing_computations.len() %}
+            {%- for coeff_word in pcs_computations.coeff_computations %}
+            mstore({{ (32 * (offset + loop.index0))|hex_padded(4) }}, {{ coeff_word|hex_padded(64) }}) // coeff_computations[{{ loop.index0 }}]
+            {%- endfor %}
             return(0, {{ (32 * (constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 + gate_computations.len() + permutation_computations.len() + lookup_computations.len() + pcs_computations.len()))|hex() }})
         }
     }

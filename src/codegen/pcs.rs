@@ -673,6 +673,11 @@ pub(crate) fn bdfg21_computations(
     } else {
         vanishing_computations
     };
+    let coeff_computations = if separate {
+        Vec::new()
+    } else {
+        coeff_computations
+    };
 
     chain![
         [point_computations, vanishing_computations],
@@ -691,12 +696,15 @@ pub(crate) fn bdfg21_computations(
 pub struct PcsDataEncoded {
     pub(crate) point_computations: Vec<U256>,
     pub(crate) vanishing_computations: Vec<U256>,
+    pub(crate) coeff_computations: Vec<U256>,
 }
 
 // implement length of PcsDataEncoded
 impl PcsDataEncoded {
     pub fn len(&self) -> usize {
-        self.point_computations.len() + self.vanishing_computations.len()
+        self.point_computations.len()
+            + self.vanishing_computations.len()
+            + self.coeff_computations.len()
     }
 }
 
@@ -714,14 +722,14 @@ pub(crate) fn bdfg21_computations_separate(
     // let w_prime = EcPoint::from(data.w_cptr + 2);
 
     let diff_0 = Word::from(Ptr::memory(0x00));
-    // let coeffs = sets
-    //     .iter()
-    //     .scan(diff_0.ptr() + 1, |state, set| {
-    //         let ptrs = Word::range(*state).take(set.rots().len()).collect_vec();
-    //         *state = *state + set.rots().len();
-    //         Some(ptrs)
-    //     })
-    //     .collect_vec();
+    let coeffs = sets
+        .iter()
+        .scan(diff_0.ptr() + 1, |state, set| {
+            let ptrs = Word::range(*state).take(set.rots().len()).collect_vec();
+            *state = *state + set.rots().len();
+            Some(ptrs)
+        })
+        .collect_vec();
 
     // let first_batch_invert_end = diff_0.ptr() + 1 + num_coeffs;
     // let second_batch_invert_end = diff_0.ptr() + sets.len();
@@ -870,7 +878,7 @@ pub(crate) fn bdfg21_computations_separate(
                     packed_word |= U256::from(diff.ptr().value().as_usize()) << offset;
                     assert!(
                         offset <= 256,
-                        "The offset for packing the set diff words exceeds 256",
+                        "The offset for packing the set diff word exceeds 256 bits",
                     );
                     packed_word
                 })
@@ -882,55 +890,69 @@ pub(crate) fn bdfg21_computations_separate(
         )
         .collect_vec()
     };
+    let coeff_computations: Vec<U256> = {
+        // 1) The first LSG byte of the first word will contain the number of words that are used to store the
+        // the set.rots().len(). The rest of the bytes in the word will contain the set.rots().len()
+        let coeff_len_words: Vec<U256> = {
+            let mut packed_words: Vec<U256> = vec![U256::from(0)];
+            let mut bit_counter = 8;
+            let mut last_idx = 0;
+            for set in sets.iter() {
+                let coeff_len = set.rots().len();
+                assert!(coeff_len <= 5, "The number of rotations in a set exceeds 5 for the coeff_computations. Can't pack all the coef_data in a single word");
+                let offset = 8;
+                let mut next_bit_counter = bit_counter + offset;
+                if next_bit_counter > 256 {
+                    last_idx += 1;
+                    packed_words.push(U256::from(0));
+                    next_bit_counter = offset;
+                    packed_words[last_idx] = U256::from(coeff_len)
+                } else {
+                    packed_words[last_idx] |= U256::from(coeff_len) << bit_counter;
+                }
+                bit_counter = next_bit_counter;
+            }
+            let packed_words_len = packed_words.len();
+            // Encode the length of the exprs vec in the first word
+            packed_words[0] |= U256::from(packed_words_len);
+            packed_words
+        };
+        // The next set of words will contain the points for the set.rots() followed by the mu_minus_points
+        // and the coeff.ptr(). Throw if set.rots().len > 5 b/c anything greater than 5 we can't pack all the ptr data into a single word.
+        let coeff_data_words: Vec<U256> = izip!(&sets, &coeffs)
+            .map(|(set, coeffs)| {
+                let mut packed_word = U256::from(0);
+                let mut offset = 0;
+                if set.rots().len() > 1 {
+                    set.rots().iter().for_each(|rot| {
+                        packed_word |= U256::from(points[rot].ptr().value().as_usize()) << offset;
+                        offset += 16;
+                    });
+                }
+                set.rots().iter().for_each(|rot| {
+                    packed_word |=
+                        U256::from(mu_minus_points[rot].ptr().value().as_usize()) << offset;
+                    offset += 16;
+                });
+                coeffs.iter().for_each(|coeff| {
+                    packed_word |= U256::from(coeff.ptr().value().as_usize()) << offset;
+                    offset += 16;
+                });
+                assert!(
+                    offset <= 256,
+                    "The offset for packing the coeff computation word exceeds 256 bits",
+                );
+                packed_word
+            })
+            .collect_vec();
+        chain!(coeff_len_words.into_iter(), coeff_data_words.into_iter()).collect_vec()
+    };
+
     PcsDataEncoded {
         point_computations,
         vanishing_computations,
+        coeff_computations,
     }
-    // let vanishing_computations = chain![
-    //     [format!("let mu := mload({mu})").to_string()],
-    //     {
-    //         let mptr = mu_minus_points.first_key_value().unwrap().1.ptr();
-    //         let mptr_end = mptr + mu_minus_points.len();
-    //         for_loop(
-    //             [
-    //                 format!("let mptr := {mptr}"),
-    //                 format!("let mptr_end := {mptr_end}"),
-    //                 format!("let point_mptr := {free_mptr}"),
-    //             ],
-    //             "lt(mptr, mptr_end)",
-    //             [
-    //                 "mptr := add(mptr, 0x20)",
-    //                 "point_mptr := add(point_mptr, 0x20)",
-    //             ]
-    //             .map(str::to_string),
-    //             ["mstore(mptr, addmod(mu, sub(R, mload(point_mptr)), R))".to_string()],
-    //         )
-    //     },
-    //     ["let s".to_string()],
-    //     chain![
-    //         [format!(
-    //             "s := {}",
-    //             mu_minus_points[sets[0].rots().first().unwrap()]
-    //         )],
-    //         chain![sets[0].rots().iter().skip(1)]
-    //             .map(|rot| { format!("s := mulmod(s, {}, R)", mu_minus_points[rot]) }),
-    //         [format!("mstore({}, s)", vanishing_0.ptr())],
-    //     ],
-    //     ["let diff".to_string()],
-    //     izip!(0.., &sets, &diffs).flat_map(|(set_idx, set, diff)| {
-    //         chain![
-    //             [set.diffs()
-    //                 .first()
-    //                 .map(|rot| format!("diff := {}", mu_minus_points[rot]))
-    //                 .unwrap_or_else(|| "diff := 1".to_string())],
-    //             chain![set.diffs().iter().skip(1)]
-    //                 .map(|rot| { format!("diff := mulmod(diff, {}, R)", mu_minus_points[rot]) }),
-    //             [format!("mstore({}, diff)", diff.ptr())],
-    //             (set_idx == 0).then(|| format!("mstore({}, diff)", diff_0.ptr())),
-    //         ]
-    //     })
-    // ]
-    // .collect_vec();
 
     // let coeff_computations = izip!(&sets, &coeffs)
     //     .map(|(set, coeffs)| {
