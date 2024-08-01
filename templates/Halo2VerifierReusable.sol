@@ -367,7 +367,80 @@ contract Halo2Verifier {
                 }
             }
 
-            // Modulus
+            function single_rot_set(r_evals_data, ptr, num_words, zeta, quotient_eval) -> ret0, ret1 {
+                let coeff := mload(and(r_evals_data, 0xFFFF))
+                r_evals_data := shr(16, r_evals_data)
+                let r_eval
+                r_eval := addmod(r_eval, mulmod(coeff, calldataload(and(r_evals_data, 0xFFFF)), R), R)
+                r_evals_data := shr(16, r_evals_data)
+                r_eval := mulmod(r_eval, zeta, R)
+                r_eval := addmod(r_eval, mulmod(coeff, quotient_eval, R), R)
+                for { let i := 0 } lt(i, num_words) { i := add(i, 1) } {
+                    for { } r_evals_data { } {
+                        let eval_group_len := and(r_evals_data, 0xFF)
+                        r_evals_data := shr(8, r_evals_data)
+                        switch eq(eval_group_len, 0x0)
+                        case 0x0 {
+                            for { let j := 0 } lt(j, eval_group_len) { j := add(j, 1) } {
+                                r_eval := addmod(mulmod(r_eval, zeta, R), mulmod(coeff, calldataload(and(r_evals_data, 0xFFFF)), R), R)
+                                r_evals_data := shr(16, r_evals_data)
+                            }
+                        } default {
+                            for
+                                {
+                                    let mptr := and(r_evals_data, 0xFFFF)
+                                    r_evals_data := shr(16, r_evals_data)
+                                    let mptr_end := and(r_evals_data, 0xFFFF)
+                                }
+                                lt(mptr_end, mptr)
+                                { mptr := sub(mptr, 0x20) }
+                            {
+                                r_eval := addmod(mulmod(r_eval, zeta, R), mulmod(coeff, calldataload(mptr), R), R)
+                            }
+                            r_evals_data := shr(16, r_evals_data)
+                        }
+                    }
+                    ptr := add(ptr, 0x20)
+                    r_evals_data := mload(ptr)
+                }
+                ret0 := r_eval
+                ret1 := ptr
+            }
+
+            function multi_rot_set(r_evals_data, ptr, num_words, rot_len, zeta) -> ret0, ret1 {
+                let coeffs_ptrs := and(r_evals_data, sub(shl(rot_len, 1), 1))
+                r_evals_data := shr(rot_len, r_evals_data)
+                let r_eval := 0
+                for { let i := 0 } lt(i, num_words) { i := add(i, 1) } {
+                    for { } r_evals_data { } {
+                        for { let j := 0 } lt(j, rot_len) { j := add(j, 16) } {
+                            r_eval := addmod(r_eval, mulmod(mload(and(shr(j, coeffs_ptrs), 0xFFFF)), calldataload(and(r_evals_data, 0xFFFF)), R), R)
+                            r_evals_data := shr(16, r_evals_data)
+                        }
+                        // Only on the last index do we NOT execute this if block.
+                        if or(r_evals_data, lt(i, sub(num_words, 1))) {
+                            r_eval := mulmod(r_eval, zeta, R)
+                        }
+                    }
+                    ptr := add(ptr, 0x20)
+                    r_evals_data := mload(ptr)
+                }
+                ret0 := r_eval
+                ret1 := ptr
+            }
+
+            function r_evals_computation(rot_len, r_evals_data_ptr, zeta, quotient_eval) -> ret0, ret1 {
+                let r_evals_data := mload(r_evals_data_ptr)
+                // number of words to encode the data needed for this set in the r_evals computation.
+                let num_words := and(r_evals_data, 0xFF)
+                r_evals_data := shr(8, r_evals_data)
+                switch rot_len
+                case 0x1 {
+                    ret0, ret1 := single_rot_set(r_evals_data, r_evals_data_ptr, num_words, zeta, quotient_eval)
+                } default {
+                    ret0, ret1 := multi_rot_set(r_evals_data, r_evals_data_ptr, num_words, rot_len, zeta)
+                }
+            }
 
             // Initialize success as true
             let success := true
@@ -792,28 +865,28 @@ contract Halo2Verifier {
             // [X] point_computations
             // [x] vanishing_computation
             // [x] coeff_computations
-            // [] formalized_coeff_computations
-            // [] r_evals_computations
+            // [x] normalized_coeff_computations
+            // [x] r_evals_computations
             // [] coeff_sums_computation
             // [] r_eval_computations
             // [] pairing_input_computations
             {
                 // point_computations 
                 let pcs_ptr := add(vk_mptr, mload(add(vk_mptr, {{ vk_const_offsets["pcs_computations_len_offset"]|hex() }})))
-                let pcs_computations := mload(pcs_ptr)
                 {
+                    let point_computations := mload(pcs_ptr)
                     let x := mload(add(theta_mptr, 0x80))
                     let omega := mload(add(vk_mptr, {{ vk_const_offsets["omega"]|hex() }}))
                     let omega_inv := mload(add(vk_mptr, {{ vk_const_offsets["omega_inv"]|hex() }}))
                     let x_pow_of_omega := mulmod(x, omega, R)
-                    x_pow_of_omega, pcs_ptr := point_rots(pcs_computations, pcs_ptr, 32, x_pow_of_omega, omega)
+                    x_pow_of_omega, pcs_ptr := point_rots(point_computations, pcs_ptr, 32, x_pow_of_omega, omega)
                     pcs_ptr := add(pcs_ptr, 0x20)
-                    pcs_computations := mload(pcs_ptr)
+                    point_computations := mload(pcs_ptr)
                     // Compute interm point
-                    mstore(and(pcs_computations, 0xFFFF), x)
+                    mstore(and(point_computations, 0xFFFF), x)
                     x_pow_of_omega := mulmod(x, omega_inv, R)
-                    pcs_computations := shr(16, pcs_computations)
-                    x_pow_of_omega, pcs_ptr := point_rots(pcs_computations, pcs_ptr, 48, x_pow_of_omega, omega_inv)
+                    point_computations := shr(16, point_computations)
+                    x_pow_of_omega, pcs_ptr := point_rots(point_computations, pcs_ptr, 48, x_pow_of_omega, omega_inv)
                     pcs_ptr := add(pcs_ptr, 0x20)
                     pop(x_pow_of_omega)
                 }
@@ -821,15 +894,15 @@ contract Halo2Verifier {
                 // vanishing_computations 
                 {
                     let mu := mload(add(theta_mptr, 0xE0))
-                    pcs_computations := mload(pcs_ptr)
+                    let vanishing_computations := mload(pcs_ptr)
                     mstore(0x20, 1)
                     for
                         {
-                            let mptr := and(pcs_computations, 0xFFFF)
-                            pcs_computations := shr(16, pcs_computations)
-                            let mptr_end := and(pcs_computations, 0xFFFF)
-                            pcs_computations := shr(16, pcs_computations)
-                            let point_mptr := and(pcs_computations, 0xFFFF)
+                            let mptr := and(vanishing_computations, 0xFFFF)
+                            vanishing_computations := shr(16, vanishing_computations)
+                            let mptr_end := and(vanishing_computations, 0xFFFF)
+                            vanishing_computations := shr(16, vanishing_computations)
+                            let point_mptr := and(vanishing_computations, 0xFFFF)
                         }
                         lt(mptr, mptr_end)
                         {
@@ -840,36 +913,36 @@ contract Halo2Verifier {
                         mstore(mptr, addmod(mu, sub(R, mload(point_mptr)), R))
                     }
                     pop(mu)
-                    pcs_computations := shr(16, pcs_computations)
+                    vanishing_computations := shr(16, vanishing_computations)
                     let s
-                    s := mload(and(pcs_computations, 0xFFFF))
-                    pcs_computations := shr(16, pcs_computations)
-                    for {  } pcs_computations {  } {
-                        s := mulmod(s, mload(and(pcs_computations, 0xFFFF)), R)
-                        pcs_computations := shr(16, pcs_computations)
+                    s := mload(and(vanishing_computations, 0xFFFF))
+                    vanishing_computations := shr(16, vanishing_computations)
+                    for {  } vanishing_computations {  } {
+                        s := mulmod(s, mload(and(vanishing_computations, 0xFFFF)), R)
+                        vanishing_computations := shr(16, vanishing_computations)
                     }
                     pcs_ptr := add(pcs_ptr, 0x20)
-                    pcs_computations := mload(pcs_ptr)
-                    mstore(and(pcs_computations, 0xFFFF), s)
-                    pcs_computations := shr(16, pcs_computations)
+                    vanishing_computations := mload(pcs_ptr)
+                    mstore(and(vanishing_computations, 0xFFFF), s)
+                    vanishing_computations := shr(16, vanishing_computations)
                     let diff
-                    let sets_len := and(pcs_computations, 0xFFFF)
+                    let sets_len := and(vanishing_computations, 0xFFFF)
                     pcs_ptr := add(pcs_ptr, 0x20)
-                    pcs_computations := mload(pcs_ptr)
+                    vanishing_computations := mload(pcs_ptr)
                     for { let i := 0 } lt(i, sets_len) { i := add(i, 1) } {
-                        diff := mload(and(pcs_computations, 0xFFFF))
-                        pcs_computations := shr(16, pcs_computations)
-                        for { } and(pcs_computations, 0xFFFF) { } {
-                            diff := mulmod(diff, mload(and(pcs_computations, 0xFFFF)), R)
-                            pcs_computations := shr(16, pcs_computations)
+                        diff := mload(and(vanishing_computations, 0xFFFF))
+                        vanishing_computations := shr(16, vanishing_computations)
+                        for { } and(vanishing_computations, 0xFFFF) { } {
+                            diff := mulmod(diff, mload(and(vanishing_computations, 0xFFFF)), R)
+                            vanishing_computations := shr(16, vanishing_computations)
                         }
-                        pcs_computations := shr(16, pcs_computations)
-                        mstore(and(pcs_computations, 0xFFFF), diff)
+                        vanishing_computations := shr(16, vanishing_computations)
+                        mstore(and(vanishing_computations, 0xFFFF), diff)
                         if eq(i, 0) {
                             mstore(0x00, diff)
                         }
                         pcs_ptr := add(pcs_ptr, 0x20)
-                        pcs_computations := mload(pcs_ptr)
+                        vanishing_computations := mload(pcs_ptr)
                     }
                 }
 
@@ -910,6 +983,37 @@ contract Halo2Verifier {
                         mstore(mptr, mulmod(mload(mptr), diff_0_inv, R))
                     }
                     pcs_ptr := add(pcs_ptr, 0x20)
+                }
+                // r_evals_computations
+                {
+                    let r_evals_meta_data := mload(pcs_ptr)
+                    let end_ptr_packed_lens := add(pcs_ptr, mul(0x20, and(r_evals_meta_data, 0xFF)))
+                    r_evals_meta_data := shr(8, r_evals_meta_data)
+                    let set_coeff := and(r_evals_meta_data, 0xFFFF)
+                    r_evals_meta_data := shr(16, r_evals_meta_data)
+                    let r_eval_mptr := and(r_evals_meta_data, 0xFFFF)
+                    r_evals_meta_data := shr(16, r_evals_meta_data)
+                    let i := pcs_ptr
+                    pcs_ptr := end_ptr_packed_lens
+                    let zeta := mload(add(theta_mptr, 0xA0))
+                    let quotient_eval := mload(add(theta_mptr, 0x240))
+                    let not_first
+                    let r_eval
+                    for {  } lt(i, end_ptr_packed_lens) { i := add(i, 0x20) } {
+                        for {  } r_evals_meta_data { } {
+                            // pass the is_single_rot_set: bool, r_evals_data word, 
+                            r_eval, pcs_ptr := r_evals_computation(and(r_evals_meta_data, 0xFF), pcs_ptr, zeta, quotient_eval)
+                            r_evals_meta_data := shr(8, r_evals_meta_data)
+                            if not_first {
+                                r_eval := mulmod(r_eval, mload(set_coeff), R)
+                                set_coeff := add(set_coeff, 0x20)
+                            }
+                            not_first := 1
+                            mstore(r_eval_mptr, r_eval)
+                            r_eval_mptr := add(r_eval_mptr, 0x20)
+                        }
+                        r_evals_meta_data := mload(add(i, 0x20))
+                    }
                 }
                 {%- for code_block in pcs_computations %}
                 {

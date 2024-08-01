@@ -173,7 +173,7 @@ pub(crate) fn rotation_sets(queries: &[Query]) -> (BTreeSet<i32>, Vec<RotationSe
         },
     );
     let superset = superset;
-    let sets =
+    let sets: Vec<RotationSet> =
         comm_queries
             .into_iter()
             .fold(Vec::<RotationSet>::new(), |mut sets, (comm, queries)| {
@@ -683,6 +683,11 @@ pub(crate) fn bdfg21_computations(
     } else {
         normalized_coeff_computations
     };
+    let r_evals_computations = if separate {
+        Vec::new()
+    } else {
+        r_evals_computations.collect_vec()
+    };
 
     chain![
         [point_computations, vanishing_computations],
@@ -703,6 +708,7 @@ pub struct PcsDataEncoded {
     pub(crate) vanishing_computations: Vec<U256>,
     pub(crate) coeff_computations: Vec<U256>,
     pub(crate) normalized_coeff_computations: U256,
+    pub(crate) r_evals_computations: Vec<U256>,
 }
 
 // implement length of PcsDataEncoded
@@ -712,6 +718,7 @@ impl PcsDataEncoded {
             + self.vanishing_computations.len()
             + self.coeff_computations.len()
             + 1 // normalized_coeff_computations
+            + self.r_evals_computations.len()
     }
 }
 
@@ -746,7 +753,7 @@ pub(crate) fn bdfg21_computations_separate(
     let mu_minus_point_mptr = point_mptr + superset.len();
     let vanishing_0_mptr = mu_minus_point_mptr + superset.len();
     let diff_mptr = vanishing_0_mptr + 1;
-    // let r_eval_mptr = diff_mptr + sets.len();
+    let r_eval_mptr = diff_mptr + sets.len();
     // let sum_mptr = r_eval_mptr + sets.len();
 
     // let point_vars =
@@ -966,111 +973,268 @@ pub(crate) fn bdfg21_computations_separate(
         packed_word
     };
 
+    // 1. The LSG byte of the first word will contain the total number of words that contain the set_coeff and the r_eval ptr followed
+    // by the packed Vec<evals.rot.len()>.
+    // 2. The next set of words will contain the evaluation pointers. The first LSG byte will contain the number of words
+    // that contain the packed evaluation pointers. The rest of the bytes will contain the evaluation pointers or evaluation pointers + coeff pointer.
+    // depending on if it is a single rotation set or not.
+    // 3. Here is how the encoding of the single rotation set will look like:
+    // 3a. After the 1 byte that contains the number of words with the packed ptr data for the given set, we encode the coeffs[0] ptr,
+    // the first eval ptr of the first group. TODO we need to assert that there is only one group of evals for a single rotation set, and that the eval in the second group index
+    // 1 is the quotient eval ptr.
+    // 3b. Next we encode the number of eval ptrs in the eval_group, encoding the eval ptrs that follow until we reach the end of the eval_group, repeating the process for the next eval_group.
+    // 4. Here is how the encoding of the not single rotation set will look like:
+    // 4a. After the 1 byte that contains the number of words with the packed ptr data for the given set, the coeffs ptrs,
+    // and the eval ptrs.
+    // and the coeff.ptr(). Throw if set.rots().len > 5 b/c anything greater than 5 we can't pack all the ptr data into a single word.
+
+    let r_evals_computations: Vec<U256> = {
+        let pack_value = |packed_word: &mut U256, value: usize, bit_counter: &mut usize| {
+            *packed_word |= U256::from(value) << *bit_counter;
+            *bit_counter += 16;
+        };
+        let encode_coeff_length = |coeff_len: usize, single_rot_set: &mut usize| -> usize {
+            if coeff_len == 1 {
+                *single_rot_set += 1;
+                assert!(
+                    *single_rot_set <= 1,
+                    "Only one single rotation set in the r_evals_computations"
+                );
+                coeff_len
+            } else {
+                assert!(coeff_len != 0, "The number of rotations in a set is 0");
+                coeff_len * 16
+            }
+        };
+
+        let r_evals_meta_data: Vec<U256> = {
+            let mut packed_words = vec![U256::from(0)];
+            let mut bit_counter = 8;
+
+            pack_value(
+                &mut packed_words[0],
+                diffs[1].ptr().value().as_usize(),
+                &mut bit_counter,
+            );
+            pack_value(
+                &mut packed_words[0],
+                r_eval_mptr.value().as_usize(),
+                &mut bit_counter,
+            );
+
+            let mut last_idx = 0;
+            let mut single_rot_set = 0;
+
+            for set in sets.iter() {
+                let coeff_len = set.rots().len();
+                // if coeff_len is greater than 1 then we scale it by 16.
+                let encoded_length = encode_coeff_length(coeff_len, &mut single_rot_set);
+
+                assert!(
+                    encoded_length <= 256,
+                    "The encoded length for r_evals exceeds 256 bits"
+                );
+
+                let next_bit_counter = bit_counter + 8;
+                if next_bit_counter > 256 {
+                    last_idx += 1;
+                    packed_words.push(U256::from(0));
+                    packed_words[last_idx] = U256::from(encoded_length);
+                } else {
+                    pack_value(
+                        &mut packed_words[last_idx],
+                        encoded_length,
+                        &mut bit_counter,
+                    );
+                }
+                bit_counter = next_bit_counter;
+            }
+
+            let packed_words_len = packed_words.len();
+            packed_words[0] |= U256::from(packed_words_len);
+            packed_words
+        };
+
+        let calculate_evals_len_offset = |evals: &[&Word]| -> (usize, usize) {
+            if evals.len() < 3 {
+                (evals.len(), 8 + (evals.len() * 16))
+            } else {
+                (0, 8 + 32)
+            }
+        };
+
+        let pack_evals = |packed_words: &mut Vec<U256>,
+                          evals: &[&Word],
+                          evals_len: usize,
+                          bit_counter: &mut usize,
+                          last_idx: usize| {
+            if evals_len == 0 {
+                let mptr = evals[0].ptr();
+                let mptr_end = evals[0].ptr() - evals.len();
+                packed_words[last_idx] |= U256::from(mptr.value().as_usize()) << *bit_counter;
+                *bit_counter += 16;
+                packed_words[last_idx] |= U256::from(mptr_end.value().as_usize()) << *bit_counter;
+                *bit_counter += 16;
+            } else {
+                for eval in evals.iter() {
+                    let eval_ptr = eval.ptr();
+                    packed_words[last_idx] |=
+                        U256::from(eval_ptr.value().as_usize()) << *bit_counter;
+                    *bit_counter += 16;
+                }
+            }
+        };
+
+        let process_single_rotation_set =
+            |set: &RotationSet,
+             coeffs: &Vec<Word>,
+             packed_words: &mut Vec<U256>,
+             bit_counter: &mut usize,
+             last_idx: &mut usize| {
+                let eval_groups = set.evals().iter().rev().fold(
+                    Vec::<Vec<&Word>>::new(),
+                    |mut eval_groups, evals| {
+                        let eval = &evals[0];
+                        if let Some(last_group) = eval_groups.last_mut() {
+                            let last_eval = **last_group.last().unwrap();
+                            if last_eval.ptr().value().is_integer()
+                                && last_eval.ptr() - 1 == eval.ptr()
+                            {
+                                last_group.push(eval)
+                            } else {
+                                eval_groups.push(vec![eval])
+                            }
+                            eval_groups
+                        } else {
+                            vec![vec![eval]]
+                        }
+                    },
+                );
+
+                let coeff_ptr = coeffs[0].ptr();
+                let first_eval_ptr = eval_groups[0][0].ptr();
+                assert!(
+                    eval_groups[1][0].ptr().loc() == Location::Memory,
+                    "The second eval group for a single rotation set should be memory but it is not"
+                );
+
+                pack_value(
+                    &mut packed_words[0],
+                    coeff_ptr.value().as_usize(),
+                    bit_counter,
+                );
+                pack_value(
+                    &mut packed_words[0],
+                    first_eval_ptr.value().as_usize(),
+                    bit_counter,
+                );
+
+                for evals in eval_groups.iter().skip(2) {
+                    let (evals_len, offset) = calculate_evals_len_offset(evals);
+                    let next_bit_counter = *bit_counter + offset;
+
+                    if next_bit_counter > 256 {
+                        *last_idx += 1;
+                        packed_words.push(U256::from(0));
+                        packed_words[*last_idx] = U256::from(evals_len);
+                        let mut new_bit_counter = 8;
+                        pack_evals(
+                            packed_words,
+                            evals,
+                            evals_len,
+                            &mut new_bit_counter,
+                            *last_idx,
+                        );
+                    } else {
+                        packed_words[*last_idx] |= U256::from(evals_len) << *bit_counter;
+                        *bit_counter += 8;
+                        pack_evals(packed_words, evals, evals_len, bit_counter, *last_idx);
+                    }
+
+                    *bit_counter = next_bit_counter;
+                }
+            };
+
+        let process_multiple_rotation_set =
+            |set: &RotationSet,
+             coeffs: &Vec<Word>,
+             packed_words: &mut Vec<U256>,
+             bit_counter: &mut usize,
+             last_idx: &mut usize| {
+                for coeff in coeffs.iter() {
+                    pack_value(
+                        &mut packed_words[0],
+                        coeff.ptr().value().as_usize(),
+                        bit_counter,
+                    );
+                }
+
+                for evals in set.evals().iter().rev() {
+                    let offset = coeffs.len() * 16;
+                    let next_bit_counter = *bit_counter + offset;
+
+                    if next_bit_counter > 256 {
+                        *last_idx += 1;
+                        packed_words.push(U256::from(0));
+                        let mut new_bit_counter = 0;
+                        for eval in evals.iter() {
+                            let eval_ptr = eval.ptr();
+                            packed_words[*last_idx] |=
+                                U256::from(eval_ptr.value().as_usize()) << new_bit_counter;
+                            new_bit_counter += 16;
+                        }
+                    } else {
+                        for eval in evals.iter() {
+                            let eval_ptr = eval.ptr();
+                            packed_words[*last_idx] |=
+                                U256::from(eval_ptr.value().as_usize()) << *bit_counter;
+                            *bit_counter += 16;
+                        }
+                    }
+
+                    *bit_counter = next_bit_counter;
+                }
+            };
+
+        let r_evals_data: Vec<U256> = izip!(&sets, &coeffs)
+            .flat_map(|(set, coeffs)| {
+                let mut packed_words = vec![U256::from(0)];
+                let mut last_idx = 0;
+                let mut bit_counter = 8;
+
+                if set.rots().len() == 1 {
+                    process_single_rotation_set(
+                        set,
+                        coeffs,
+                        &mut packed_words,
+                        &mut bit_counter,
+                        &mut last_idx,
+                    );
+                } else {
+                    process_multiple_rotation_set(
+                        set,
+                        coeffs,
+                        &mut packed_words,
+                        &mut bit_counter,
+                        &mut last_idx,
+                    );
+                }
+
+                let packed_words_len = packed_words.len();
+                packed_words[0] |= U256::from(packed_words_len);
+                packed_words
+            })
+            .collect();
+        chain!(r_evals_meta_data.into_iter(), r_evals_data.into_iter()).collect_vec()
+    };
+
     PcsDataEncoded {
         point_computations,
         vanishing_computations,
         coeff_computations,
         normalized_coeff_computations,
+        r_evals_computations,
     }
-
-    // let normalized_coeff_computations = chain![
-    //     [
-    //         format!("success := batch_invert(success, 0, {first_batch_invert_end})"),
-    //         format!("let diff_0_inv := {diff_0}"),
-    //         format!("mstore({}, diff_0_inv)", diffs[0].ptr()),
-    //     ],
-    //     for_loop(
-    //         [
-    //             format!("let mptr := {}", diffs[0].ptr() + 1),
-    //             format!("let mptr_end := {}", diffs[0].ptr() + sets.len()),
-    //         ],
-    //         "lt(mptr, mptr_end)",
-    //         ["mptr := add(mptr, 0x20)".to_string()],
-    //         ["mstore(mptr, mulmod(mload(mptr), diff_0_inv, R))".to_string()],
-    //     ),
-    // ]
-    // .collect_vec();
-
-    // let r_evals_computations = izip!(0.., &sets, &coeffs, &diffs, &r_evals).map(
-    //     |(set_idx, set, coeffs, set_coeff, r_eval)| {
-    //         let is_single_rot_set = set.rots().len() == 1;
-    //         chain![
-    //             is_single_rot_set.then(|| format!("let coeff := {}", coeffs[0])),
-    //             [
-    //                 format!("let zeta := mload({})", zeta).as_str(),
-    //                 "let r_eval := 0"
-    //             ]
-    //             .map(str::to_string),
-    //             if is_single_rot_set {
-    //                 let eval_groups = set.evals().iter().rev().fold(
-    //                     Vec::<Vec<&Word>>::new(),
-    //                     |mut eval_groups, evals| {
-    //                         let eval = &evals[0];
-    //                         if let Some(last_group) = eval_groups.last_mut() {
-    //                             let last_eval = **last_group.last().unwrap();
-    //                             if last_eval.ptr().value().is_integer()
-    //                                 && last_eval.ptr() - 1 == eval.ptr()
-    //                             {
-    //                                 last_group.push(eval)
-    //                             } else {
-    //                                 eval_groups.push(vec![eval])
-    //                             }
-    //                             eval_groups
-    //                         } else {
-    //                             vec![vec![eval]]
-    //                         }
-    //                     },
-    //                 );
-    //                 chain![eval_groups.iter().enumerate()]
-    //                     .flat_map(|(group_idx, evals)| {
-    //                         if evals.len() < 3 {
-    //                             chain![evals.iter().enumerate()]
-    //                                 .flat_map(|(eval_idx, eval)| {
-    //                                     let is_first_eval = group_idx == 0 && eval_idx == 0;
-    //                                     let item = format!("mulmod(coeff, {eval}, R)");
-    //                                     chain![
-    //                                         (!is_first_eval).then(|| format!(
-    //                                             "r_eval := mulmod(r_eval, zeta, R)"
-    //                                         )),
-    //                                         [format!("r_eval := addmod(r_eval, {item}, R)")],
-    //                                     ]
-    //                                 })
-    //                                 .collect_vec()
-    //                         } else {
-    //                             let item = "mulmod(coeff, calldataload(mptr), R)";
-    //                             for_loop(
-    //                                 [
-    //                                     format!("let mptr := {}", evals[0].ptr()),
-    //                                     format!("let mptr_end := {}", evals[0].ptr() - evals.len()),
-    //                                 ],
-    //                                 "lt(mptr_end, mptr)".to_string(),
-    //                                 ["mptr := sub(mptr, 0x20)".to_string()],
-    //                                 [format!(
-    //                                     "r_eval := addmod(mulmod(r_eval, zeta, R), {item}, R)"
-    //                                 )],
-    //                             )
-    //                         }
-    //                     })
-    //                     .collect_vec()
-    //             } else {
-    //                 chain![set.evals().iter().enumerate().rev()]
-    //                     .flat_map(|(idx, evals)| {
-    //                         chain![
-    //                             izip!(evals, coeffs).map(|(eval, coeff)| {
-    //                                 let item = format!("mulmod({coeff}, {eval}, R)");
-    //                                 format!("r_eval := addmod(r_eval, {item}, R)")
-    //                             }),
-    //                             (idx != 0).then(|| format!("r_eval := mulmod(r_eval, zeta, R)")),
-    //                         ]
-    //                     })
-    //                     .collect_vec()
-    //             },
-    //             (set_idx != 0).then(|| format!("r_eval := mulmod(r_eval, {set_coeff}, R)")),
-    //             [format!("mstore({}, r_eval)", r_eval.ptr())],
-    //         ]
-    //         .collect_vec()
-    //     },
-    // );
 
     // let coeff_sums_computation = izip!(&coeffs, &sums).map(|(coeffs, sum)| {
     //     let (coeff_0, rest_coeffs) = coeffs.split_first().unwrap();
