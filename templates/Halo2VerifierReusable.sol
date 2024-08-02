@@ -867,7 +867,7 @@ contract Halo2Verifier {
             // [x] coeff_computations
             // [x] normalized_coeff_computations
             // [x] r_evals_computations
-            // [] coeff_sums_computation
+            // [x] coeff_sums_computation
             // [] r_eval_computations
             // [] pairing_input_computations
             {
@@ -985,6 +985,8 @@ contract Halo2Verifier {
                     pcs_ptr := add(pcs_ptr, 0x20)
                 }
                 // r_evals_computations
+                // TODO optimizize this by hardcoding the coeff_ptr and iterating it
+                // over the coeff_len_data. Will reduce VK size. 
                 {
                     let r_evals_meta_data := mload(pcs_ptr)
                     let end_ptr_packed_lens := add(pcs_ptr, mul(0x20, and(r_evals_meta_data, 0xFF)))
@@ -1014,6 +1016,30 @@ contract Halo2Verifier {
                         }
                         r_evals_meta_data := mload(add(i, 0x20))
                     }
+                }
+                // coeff_sums_computation
+                {
+                    let coeff_sums_data := mload(pcs_ptr)
+                    let end_ptr_packed_lens := add(pcs_ptr, mul(0x20, and(coeff_sums_data, 0xFF)))
+                    coeff_sums_data := shr(8, coeff_sums_data)
+                    let coeff_ptr := 0x20
+                    let i := pcs_ptr
+                    pcs_ptr := end_ptr_packed_lens
+                    for {  } lt(i, end_ptr_packed_lens) { i := add(i, 0x20) } {
+                        for {  } coeff_sums_data { } {
+                            let sum := mload(coeff_ptr) 
+                            let len := and(coeff_sums_data, 0xFF)
+                            coeff_sums_data := shr(8, coeff_sums_data)
+                            for { let j := 0x20 } lt(j, len) { j := add(j, 0x20) } {
+                                sum := addmod(sum, mload(add(coeff_ptr, j)), R)
+                            }
+                            coeff_ptr := add(coeff_ptr, len)
+                            mstore(and(coeff_sums_data, 0xFFFF), sum)
+                            coeff_sums_data := shr(16, coeff_sums_data)
+                        }
+                        coeff_sums_data := mload(add(i, 0x20))
+                    }
+
                 }
                 {%- for code_block in pcs_computations %}
                 {

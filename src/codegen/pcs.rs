@@ -688,6 +688,11 @@ pub(crate) fn bdfg21_computations(
     } else {
         r_evals_computations.collect_vec()
     };
+    let coeff_sums_computation = if separate {
+        Vec::new()
+    } else {
+        coeff_sums_computation.collect_vec()
+    };
 
     chain![
         [point_computations, vanishing_computations],
@@ -709,6 +714,7 @@ pub struct PcsDataEncoded {
     pub(crate) coeff_computations: Vec<U256>,
     pub(crate) normalized_coeff_computations: U256,
     pub(crate) r_evals_computations: Vec<U256>,
+    pub(crate) coeff_sums_computation: Vec<U256>,
 }
 
 // implement length of PcsDataEncoded
@@ -719,6 +725,7 @@ impl PcsDataEncoded {
             + self.coeff_computations.len()
             + 1 // normalized_coeff_computations
             + self.r_evals_computations.len()
+            + self.coeff_sums_computation.len()
     }
 }
 
@@ -754,7 +761,7 @@ pub(crate) fn bdfg21_computations_separate(
     let vanishing_0_mptr = mu_minus_point_mptr + superset.len();
     let diff_mptr = vanishing_0_mptr + 1;
     let r_eval_mptr = diff_mptr + sets.len();
-    // let sum_mptr = r_eval_mptr + sets.len();
+    let sum_mptr = r_eval_mptr + sets.len();
 
     // let point_vars =
     //     izip!(&superset, (0..).map(|idx| format!("point_{idx}"))).collect::<BTreeMap<_, _>>();
@@ -764,7 +771,7 @@ pub(crate) fn bdfg21_computations_separate(
     let vanishing_0 = Word::from(vanishing_0_mptr);
     let diffs = Word::range(diff_mptr).take(sets.len()).collect_vec();
     // let r_evals = Word::range(r_eval_mptr).take(sets.len()).collect_vec();
-    // let sums = Word::range(sum_mptr).take(sets.len()).collect_vec();
+    let sums = Word::range(sum_mptr).take(sets.len()).collect_vec();
     // if separate then we load in omega and omega_inv from vk_mptr + hardcoded offset.
     // Otherwise we load in omega and omega_inv from the solidity constants.
 
@@ -1228,25 +1235,43 @@ pub(crate) fn bdfg21_computations_separate(
         chain!(r_evals_meta_data.into_iter(), r_evals_data.into_iter()).collect_vec()
     };
 
+    let coeff_sums_computation: Vec<U256> = {
+        let mut packed_words = vec![U256::from(0)];
+        let mut bit_counter = 8;
+        let mut last_idx = 0;
+        for (coeffs, sum) in izip!(&coeffs, &sums) {
+            let offset = 24;
+            let next_bit_counter = bit_counter + offset;
+            let len_minus_one = coeffs.len() * 32;
+            assert!(
+                len_minus_one <= 256,
+                "The length of the coeffs exceeds 256 bits",
+            );
+            if next_bit_counter > 256 {
+                last_idx += 1;
+                packed_words.push(U256::from(0));
+                packed_words[last_idx] |= U256::from(len_minus_one);
+                packed_words[last_idx] |= U256::from(sum.ptr().value().as_usize()) << 8;
+            } else {
+                packed_words[last_idx] |= U256::from(len_minus_one) << bit_counter;
+                bit_counter += 8;
+                packed_words[last_idx] |= U256::from(sum.ptr().value().as_usize()) << bit_counter;
+            }
+            bit_counter = next_bit_counter;
+        }
+        let packed_words_len = packed_words.len();
+        packed_words[0] |= U256::from(packed_words_len);
+        packed_words
+    };
+
     PcsDataEncoded {
         point_computations,
         vanishing_computations,
         coeff_computations,
         normalized_coeff_computations,
         r_evals_computations,
+        coeff_sums_computation,
     }
-
-    // let coeff_sums_computation = izip!(&coeffs, &sums).map(|(coeffs, sum)| {
-    //     let (coeff_0, rest_coeffs) = coeffs.split_first().unwrap();
-    //     chain![
-    //         [format!("let sum := {coeff_0}")],
-    //         rest_coeffs
-    //             .iter()
-    //             .map(|coeff_mptr| format!("sum := addmod(sum, {coeff_mptr}, R)")),
-    //         [format!("mstore({}, sum)", sum.ptr())],
-    //     ]
-    //     .collect_vec()
-    // });
 
     // let nu = get_memory_ptr(theta_mptr, 6, &separate);
     // let mu = get_memory_ptr(theta_mptr, 7, &separate);

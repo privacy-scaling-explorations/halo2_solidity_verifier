@@ -95,6 +95,10 @@ contract Halo2VerifyingKey {
             {%- for r_eval_word in pcs_computations.r_evals_computations %}
             mstore({{ (32 * (offset_1 + loop.index0))|hex_padded(4) }}, {{ r_eval_word|hex_padded(64) }}) // r_evals_computations[{{ loop.index0 }}]
             {%- endfor %}
+            {%- let offset_2 = offset_1 + pcs_computations.r_evals_computations.len() %}
+            {%- for coeff_sum in pcs_computations.coeff_sums_computation %}
+            mstore({{ (32 * (offset_2 + loop.index0))|hex_padded(4) }}, {{ coeff_sum|hex_padded(64) }}) // coeff_sums_computation[{{ loop.index0 }}]
+            {%- endfor %}
             return(0, {{ (32 * (constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 + gate_computations.len() + permutation_computations.len() + lookup_computations.len() + pcs_computations.len()))|hex() }})
         }
     }
