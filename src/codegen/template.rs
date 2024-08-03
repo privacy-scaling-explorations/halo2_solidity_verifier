@@ -64,7 +64,6 @@ pub(crate) struct Halo2Verifier {
 #[template(path = "Halo2VerifierReusable.sol")]
 pub(crate) struct Halo2VerifierReusable {
     pub(crate) scheme: BatchOpenScheme,
-    pub(crate) pcs_computations: Vec<Vec<String>>,
     pub(crate) vk_const_offsets: HashMap<&'static str, U256>,
 }
 

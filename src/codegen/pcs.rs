@@ -552,7 +552,6 @@ pub(crate) fn bdfg21_computations(
         [format!("mstore({r_eval}, r_eval)")],
     ]
     .collect_vec();
-
     let pairing_input_computations = chain![
         [format!("let nu := mload({nu})").to_string()],
         izip!(0.., &sets, &diffs).flat_map(|(set_idx, set, set_coeff)| {
@@ -663,37 +662,6 @@ pub(crate) fn bdfg21_computations(
     ]
     .collect_vec();
 
-    let point_computations = if separate {
-        Vec::new()
-    } else {
-        point_computations
-    };
-    let vanishing_computations = if separate {
-        Vec::new()
-    } else {
-        vanishing_computations
-    };
-    let coeff_computations = if separate {
-        Vec::new()
-    } else {
-        coeff_computations
-    };
-    let normalized_coeff_computations = if separate {
-        Vec::new()
-    } else {
-        normalized_coeff_computations
-    };
-    let r_evals_computations = if separate {
-        Vec::new()
-    } else {
-        r_evals_computations.collect_vec()
-    };
-    let coeff_sums_computation = if separate {
-        Vec::new()
-    } else {
-        coeff_sums_computation.collect_vec()
-    };
-
     chain![
         [point_computations, vanishing_computations],
         coeff_computations,
@@ -715,6 +683,8 @@ pub struct PcsDataEncoded {
     pub(crate) normalized_coeff_computations: U256,
     pub(crate) r_evals_computations: Vec<U256>,
     pub(crate) coeff_sums_computation: Vec<U256>,
+    pub(crate) r_eval_computations: U256,
+    pub(crate) pairing_input_computations: Vec<U256>,
 }
 
 // implement length of PcsDataEncoded
@@ -726,6 +696,8 @@ impl PcsDataEncoded {
             + 1 // normalized_coeff_computations
             + self.r_evals_computations.len()
             + self.coeff_sums_computation.len()
+            + 1 // r_eval_computations
+            + self.pairing_input_computations.len()
     }
 }
 
@@ -739,8 +711,8 @@ pub(crate) fn bdfg21_computations_separate(
     let max_rot = *superset.last().unwrap();
     let num_coeffs = sets.iter().map(|set| set.rots().len()).sum::<usize>();
 
-    // let w = EcPoint::from(data.w_cptr);
-    // let w_prime = EcPoint::from(data.w_cptr + 2);
+    let w = EcPoint::from(data.w_cptr);
+    let w_prime = EcPoint::from(data.w_cptr + 2);
 
     let diff_0 = Word::from(Ptr::memory(0x00));
     let coeffs = sets
@@ -753,7 +725,7 @@ pub(crate) fn bdfg21_computations_separate(
         .collect_vec();
 
     let first_batch_invert_end = diff_0.ptr() + 1 + num_coeffs;
-    // let second_batch_invert_end = diff_0.ptr() + sets.len();
+    let second_batch_invert_end = diff_0.ptr() + sets.len();
     let free_mptr = diff_0.ptr() + 2 * (1 + num_coeffs) + 6;
 
     let point_mptr = free_mptr;
@@ -763,32 +735,14 @@ pub(crate) fn bdfg21_computations_separate(
     let r_eval_mptr = diff_mptr + sets.len();
     let sum_mptr = r_eval_mptr + sets.len();
 
-    // let point_vars =
-    //     izip!(&superset, (0..).map(|idx| format!("point_{idx}"))).collect::<BTreeMap<_, _>>();
     let points = izip!(&superset, Word::range(point_mptr)).collect::<BTreeMap<_, _>>();
     let mu_minus_points =
         izip!(&superset, Word::range(mu_minus_point_mptr)).collect::<BTreeMap<_, _>>();
     let vanishing_0 = Word::from(vanishing_0_mptr);
     let diffs = Word::range(diff_mptr).take(sets.len()).collect_vec();
-    // let r_evals = Word::range(r_eval_mptr).take(sets.len()).collect_vec();
+    let r_evals = Word::range(r_eval_mptr).take(sets.len()).collect_vec();
     let sums = Word::range(sum_mptr).take(sets.len()).collect_vec();
-    // if separate then we load in omega and omega_inv from vk_mptr + hardcoded offset.
-    // Otherwise we load in omega and omega_inv from the solidity constants.
 
-    // let vk_mptr = "vk_mptr";
-    // let theta_mptr = "theta_mptr";
-
-    // let omega = get_memory_ptr(vk_mptr, 10, &separate);
-
-    // let omega_inv = get_memory_ptr(vk_mptr, 11, &separate);
-
-    // let g1_x = get_memory_ptr(vk_mptr, 17, &separate);
-
-    // let g1_y = get_memory_ptr(vk_mptr, 18, &separate);
-
-    // let x = get_memory_ptr(theta_mptr, 4, &separate);
-
-    // let zeta = get_memory_ptr(theta_mptr, 5, &separate);
     let point_computations: Vec<U256> = {
         let pack_words = |points: Vec<U256>, interm_point: Option<U256>| {
             let mut packed_words: Vec<U256> = vec![U256::from(0)];
@@ -806,16 +760,14 @@ pub(crate) fn bdfg21_computations_separate(
             for point in points.iter() {
                 let offset = 16;
 
-                let mut next_bit_counter = bit_counter + offset;
+                let next_bit_counter = bit_counter + offset;
                 if next_bit_counter > 256 {
                     last_idx += 1;
                     packed_words.push(U256::from(0));
-                    next_bit_counter = offset;
-                    packed_words[last_idx] = *point
-                } else {
-                    packed_words[last_idx] |= *point << bit_counter;
+                    bit_counter = 0;
                 }
-                bit_counter = next_bit_counter;
+                packed_words[last_idx] |= *point << bit_counter;
+                bit_counter += 16;
             }
 
             packed_words
@@ -922,16 +874,14 @@ pub(crate) fn bdfg21_computations_separate(
                 let coeff_len = set.rots().len();
                 assert!(coeff_len <= 5, "The number of rotations in a set exceeds 5 for the coeff_computations. Can't pack all the coef_data in a single word");
                 let offset = 8;
-                let mut next_bit_counter = bit_counter + offset;
+                let next_bit_counter = bit_counter + offset;
                 if next_bit_counter > 256 {
                     last_idx += 1;
                     packed_words.push(U256::from(0));
-                    next_bit_counter = offset;
-                    packed_words[last_idx] = U256::from(coeff_len)
-                } else {
-                    packed_words[last_idx] |= U256::from(coeff_len) << bit_counter;
+                    bit_counter = 0;
                 }
-                bit_counter = next_bit_counter;
+                packed_words[last_idx] |= U256::from(coeff_len) << bit_counter;
+                bit_counter += 8;
             }
             let packed_words_len = packed_words.len();
             // Encode the length of the exprs vec in the first word
@@ -1038,7 +988,7 @@ pub(crate) fn bdfg21_computations_separate(
                 let encoded_length = encode_coeff_length(coeff_len, &mut single_rot_set);
 
                 assert!(
-                    encoded_length <= 256,
+                    encoded_length < 256,
                     "The encoded length for r_evals exceeds 256 bits"
                 );
 
@@ -1046,15 +996,10 @@ pub(crate) fn bdfg21_computations_separate(
                 if next_bit_counter > 256 {
                     last_idx += 1;
                     packed_words.push(U256::from(0));
-                    packed_words[last_idx] = U256::from(encoded_length);
-                } else {
-                    pack_value(
-                        &mut packed_words[last_idx],
-                        encoded_length,
-                        &mut bit_counter,
-                    );
+                    bit_counter = 0;
                 }
-                bit_counter = next_bit_counter;
+                packed_words[last_idx] |= U256::from(encoded_length) << bit_counter;
+                bit_counter += 8;
             }
 
             let packed_words_len = packed_words.len();
@@ -1143,22 +1088,12 @@ pub(crate) fn bdfg21_computations_separate(
                     if next_bit_counter > 256 {
                         *last_idx += 1;
                         packed_words.push(U256::from(0));
-                        packed_words[*last_idx] = U256::from(evals_len);
-                        let mut new_bit_counter = 8;
-                        pack_evals(
-                            packed_words,
-                            evals,
-                            evals_len,
-                            &mut new_bit_counter,
-                            *last_idx,
-                        );
-                    } else {
-                        packed_words[*last_idx] |= U256::from(evals_len) << *bit_counter;
-                        *bit_counter += 8;
-                        pack_evals(packed_words, evals, evals_len, bit_counter, *last_idx);
+                        *bit_counter = 0;
                     }
 
-                    *bit_counter = next_bit_counter;
+                    packed_words[*last_idx] |= U256::from(evals_len) << *bit_counter;
+                    *bit_counter += 8;
+                    pack_evals(packed_words, evals, evals_len, bit_counter, *last_idx);
                 }
             };
 
@@ -1183,23 +1118,14 @@ pub(crate) fn bdfg21_computations_separate(
                     if next_bit_counter > 256 {
                         *last_idx += 1;
                         packed_words.push(U256::from(0));
-                        let mut new_bit_counter = 0;
-                        for eval in evals.iter() {
-                            let eval_ptr = eval.ptr();
-                            packed_words[*last_idx] |=
-                                U256::from(eval_ptr.value().as_usize()) << new_bit_counter;
-                            new_bit_counter += 16;
-                        }
-                    } else {
-                        for eval in evals.iter() {
-                            let eval_ptr = eval.ptr();
-                            packed_words[*last_idx] |=
-                                U256::from(eval_ptr.value().as_usize()) << *bit_counter;
-                            *bit_counter += 16;
-                        }
+                        *bit_counter = 0;
                     }
-
-                    *bit_counter = next_bit_counter;
+                    for eval in evals.iter() {
+                        let eval_ptr = eval.ptr();
+                        packed_words[*last_idx] |=
+                            U256::from(eval_ptr.value().as_usize()) << *bit_counter;
+                        *bit_counter += 16;
+                    }
                 }
             };
 
@@ -1242,26 +1168,167 @@ pub(crate) fn bdfg21_computations_separate(
         for (coeffs, sum) in izip!(&coeffs, &sums) {
             let offset = 24;
             let next_bit_counter = bit_counter + offset;
-            let len_minus_one = coeffs.len() * 32;
-            assert!(
-                len_minus_one <= 256,
-                "The length of the coeffs exceeds 256 bits",
-            );
+            let len = coeffs.len() * 32;
+            assert!(len < 256, "The length of the coeffs exceeds 256 bits",);
             if next_bit_counter > 256 {
                 last_idx += 1;
                 packed_words.push(U256::from(0));
-                packed_words[last_idx] |= U256::from(len_minus_one);
-                packed_words[last_idx] |= U256::from(sum.ptr().value().as_usize()) << 8;
-            } else {
-                packed_words[last_idx] |= U256::from(len_minus_one) << bit_counter;
-                bit_counter += 8;
-                packed_words[last_idx] |= U256::from(sum.ptr().value().as_usize()) << bit_counter;
+                bit_counter = 0;
             }
-            bit_counter = next_bit_counter;
+            packed_words[last_idx] |= U256::from(len) << bit_counter;
+            bit_counter += 8;
+            packed_words[last_idx] |= U256::from(sum.ptr().value().as_usize()) << bit_counter;
+            bit_counter += 16;
         }
         let packed_words_len = packed_words.len();
         packed_words[0] |= U256::from(packed_words_len);
         packed_words
+    };
+
+    let r_eval_computations: U256 = {
+        let mut packed_word = U256::from(0);
+        let mut offset = 0;
+        packed_word |= U256::from(second_batch_invert_end.value().as_usize()) << offset;
+        offset += 16;
+        packed_word |= U256::from(sums[0].ptr().value().as_usize()) << offset;
+        offset += 16;
+        packed_word |= U256::from(r_evals.last().unwrap().ptr().value().as_usize()) << offset;
+        packed_word
+    };
+
+    let pairing_input_computations: Vec<U256> = {
+        let mut word_lengths = Vec::new();
+        let data: Vec<U256> = sets
+            .iter()
+            .flat_map(|set| {
+                let comm_groups = set.comms().iter().rev().skip(1).fold(
+                    Vec::<(Location, Vec<&EcPoint>)>::new(),
+                    |mut comm_groups, comm| {
+                        if let Some(last_group) = comm_groups.last_mut() {
+                            let last_comm = **last_group.1.last().unwrap();
+                            if last_group.0 == comm.loc()
+                                && last_comm.x().ptr().value().is_integer()
+                                && last_comm.x().ptr() - 2 == comm.x().ptr()
+                            {
+                                last_group.1.push(comm)
+                            } else {
+                                comm_groups.push((comm.loc(), vec![comm]))
+                            }
+                            comm_groups
+                        } else {
+                            vec![(comm.loc(), vec![comm])]
+                        }
+                    },
+                );
+                let mut packed_words = vec![U256::from(0)];
+                let mut bit_counter = 0;
+                let mut last_idx = 0;
+                let comm = set.comms().last().unwrap();
+                packed_words[last_idx] |=
+                    U256::from(comm.x().ptr().value().as_usize()) << bit_counter;
+                bit_counter += 16;
+                packed_words[last_idx] |=
+                    U256::from(comm.y().ptr().value().as_usize()) << bit_counter;
+                bit_counter += 16;
+                for (loc, comms) in comm_groups.iter() {
+                    let is_quotient_point = !comms[0].x().ptr().value().is_integer()
+                        && !comms[0].y().ptr().value().is_integer();
+                    let offset = if comms.len() == 2 { 80 } else if is_quotient_point { 16 } else { 48 } ;
+                    let next_bit_counter = bit_counter + offset;
+                    if next_bit_counter > 256 {
+                        last_idx += 1;
+                        packed_words.push(U256::from(0));
+                        bit_counter = 0;
+                    }
+                    let loc_encoded = if is_quotient_point
+                    {
+                        assert!(
+                            comms.len() == 1,
+                            "The number of comms in the group containing the quotient points must be 1",
+                        );
+                        // we encode 0x02 if the comm is a quotient point 
+                        0x02
+                    } else {
+                        // check the location of the comm. If it is memory then we encode 0x00, 0x01 otherwise
+                        if *loc == Location::Memory { 0x00 } else { 0x01 }
+                    };
+                    packed_words[last_idx] |= U256::from(loc_encoded) << bit_counter;
+                    bit_counter += 8;
+                    let len_encoded = if comms.len() < 3 { comms.len() } else { 0 };
+                    packed_words[last_idx] |= U256::from(len_encoded) << bit_counter;
+                    bit_counter += 8;
+                    if loc_encoded == 0x02 {
+                        // we hardcode the location of the quotient points in reusable verifier so we skip encoding them
+                        // in the vk 
+                        continue;
+                    }
+                    if comms.len() < 3 {
+                        comms.iter().for_each(|comm| {
+                            packed_words[last_idx] |=
+                                U256::from(comm.x().ptr().value().as_usize()) << bit_counter;
+                            bit_counter += 16;
+                            packed_words[last_idx] |=
+                                U256::from(comm.y().ptr().value().as_usize()) << bit_counter;
+                            bit_counter += 16;
+                        });
+                    } else {
+                        let mptr = comms.first().unwrap().x().ptr();
+                        let mptr_end = mptr - 2 * comms.len();
+                        packed_words[last_idx] |=
+                            U256::from(mptr.value().as_usize()) << bit_counter;
+                        bit_counter += 16;
+                        packed_words[last_idx] |=
+                            U256::from(mptr_end.value().as_usize()) << bit_counter;
+                        bit_counter += 16;
+                    }
+                }
+                assert!(
+                    packed_words.len() * 32 < 256,
+                    "The bit counter for the pairing input computations exceeds 256 bits"
+                );
+                // update the word lengths
+                word_lengths.push(packed_words.len() * 32);
+                packed_words
+            })
+            .collect();
+
+        let meta_data: Vec<U256> = {
+            let mut packed_words = vec![U256::from(0)];
+            let mut bit_counter = 8;
+            let mut last_idx = 0;
+            packed_words[last_idx] |= U256::from(diffs[1].ptr().value().as_usize()) << bit_counter;
+            bit_counter += 16;
+            // pack the ec points cptrs
+            packed_words[last_idx] |= U256::from(w.x().ptr().value().as_usize()) << bit_counter;
+            bit_counter += 16;
+            packed_words[last_idx] |= U256::from(w.y().ptr().value().as_usize()) << bit_counter;
+            bit_counter += 16;
+            packed_words[last_idx] |=
+                U256::from(vanishing_0.ptr().value().as_usize()) << bit_counter;
+            bit_counter += 16;
+            packed_words[last_idx] |=
+                U256::from(w_prime.x().ptr().value().as_usize()) << bit_counter;
+            bit_counter += 16;
+            packed_words[last_idx] |=
+                U256::from(w_prime.y().ptr().value().as_usize()) << bit_counter;
+            bit_counter += 16;
+
+            // iterate through the word lengths and pack them into the first word
+            for len in word_lengths.iter() {
+                let next_bit_counter = bit_counter + 8;
+                if next_bit_counter > 256 {
+                    last_idx += 1;
+                    packed_words.push(U256::from(0));
+                    bit_counter = 0;
+                }
+                packed_words[last_idx] |= U256::from(*len) << bit_counter;
+                bit_counter += 8;
+            }
+            let packed_words_len = packed_words.len();
+            packed_words[0] |= U256::from(packed_words_len);
+            packed_words
+        };
+        chain!(meta_data.into_iter(), data.into_iter()).collect_vec()
     };
 
     PcsDataEncoded {
@@ -1271,173 +1338,7 @@ pub(crate) fn bdfg21_computations_separate(
         normalized_coeff_computations,
         r_evals_computations,
         coeff_sums_computation,
+        r_eval_computations,
+        pairing_input_computations,
     }
-
-    // let nu = get_memory_ptr(theta_mptr, 6, &separate);
-    // let mu = get_memory_ptr(theta_mptr, 7, &separate);
-    // let r_eval = get_memory_ptr(theta_mptr, 21, &separate);
-    // let pairing_lhs_x = get_memory_ptr(theta_mptr, 22, &separate);
-    // let pairing_lhs_y = get_memory_ptr(theta_mptr, 23, &separate);
-    // let pairing_rhs_x = get_memory_ptr(theta_mptr, 24, &separate);
-    // let pairing_rhs_y = get_memory_ptr(theta_mptr, 25, &separate);
-    // let r_eval_computations = chain![
-    //     for_loop(
-    //         [
-    //             format!("let mptr := 0x00"),
-    //             format!("let mptr_end := {second_batch_invert_end}"),
-    //             format!("let sum_mptr := {}", sums[0].ptr()),
-    //         ],
-    //         "lt(mptr, mptr_end)",
-    //         ["mptr := add(mptr, 0x20)", "sum_mptr := add(sum_mptr, 0x20)"].map(str::to_string),
-    //         ["mstore(mptr, mload(sum_mptr))".to_string()],
-    //     ),
-    //     [
-    //         format!("success := batch_invert(success, 0, {second_batch_invert_end})"),
-    //         format!(
-    //             "let r_eval := mulmod(mload({}), {}, R)",
-    //             second_batch_invert_end - 1,
-    //             r_evals.last().unwrap()
-    //         )
-    //     ],
-    //     for_loop(
-    //         [
-    //             format!("let sum_inv_mptr := {}", second_batch_invert_end - 2),
-    //             format!("let sum_inv_mptr_end := {second_batch_invert_end}"),
-    //             format!("let r_eval_mptr := {}", r_evals[r_evals.len() - 2].ptr()),
-    //         ],
-    //         "lt(sum_inv_mptr, sum_inv_mptr_end)",
-    //         [
-    //             "sum_inv_mptr := sub(sum_inv_mptr, 0x20)",
-    //             "r_eval_mptr := sub(r_eval_mptr, 0x20)"
-    //         ]
-    //         .map(str::to_string),
-    //         [
-    //             format!("r_eval := mulmod(r_eval, mload({nu}), R)").as_str(),
-    //             "r_eval := addmod(r_eval, mulmod(mload(sum_inv_mptr), mload(r_eval_mptr), R), R)"
-    //         ]
-    //         .map(str::to_string),
-    //     ),
-    //     [format!("mstore({r_eval}, r_eval)")],
-    // ]
-    // .collect_vec();
-
-    // let pairing_input_computations = chain![
-    //     [format!("let nu := mload({nu})").to_string()],
-    //     izip!(0.., &sets, &diffs).flat_map(|(set_idx, set, set_coeff)| {
-    //         let is_first_set = set_idx == 0;
-    //         let is_last_set = set_idx == sets.len() - 1;
-
-    //         let ec_add = &format!("ec_add_{}", if is_first_set { "acc" } else { "tmp" });
-    //         let ec_mul = &format!("ec_mul_{}", if is_first_set { "acc" } else { "tmp" });
-    //         let acc_x = Ptr::memory(0x00) + if is_first_set { 0 } else { 4 };
-    //         let acc_y = acc_x + 1;
-
-    //         let comm_groups = set.comms().iter().rev().skip(1).fold(
-    //             Vec::<(Location, Vec<&EcPoint>)>::new(),
-    //             |mut comm_groups, comm| {
-    //                 if let Some(last_group) = comm_groups.last_mut() {
-    //                     let last_comm = **last_group.1.last().unwrap();
-    //                     if last_group.0 == comm.loc()
-    //                         && last_comm.x().ptr().value().is_integer()
-    //                         && last_comm.x().ptr() - 2 == comm.x().ptr()
-    //                     {
-    //                         last_group.1.push(comm)
-    //                     } else {
-    //                         comm_groups.push((comm.loc(), vec![comm]))
-    //                     }
-    //                     comm_groups
-    //                 } else {
-    //                     vec![(comm.loc(), vec![comm])]
-    //                 }
-    //             },
-    //         );
-    //         let zeta_mptr = &zeta;
-    //         chain![
-    //             set.comms()
-    //                 .last()
-    //                 .map(|comm| {
-    //                     [
-    //                         format!("mstore({acc_x}, {})", comm.x()),
-    //                         format!("mstore({acc_y}, {})", comm.y()),
-    //                     ]
-    //                 })
-    //                 .into_iter()
-    //                 .flatten(),
-    //             comm_groups.into_iter().flat_map(move |(loc, comms)| {
-    //                 if comms.len() < 3 {
-    //                     comms
-    //                         .iter()
-    //                         .flat_map(|comm| {
-    //                             let (x, y) = (comm.x(), comm.y());
-    //                             [
-    //                                 format!("success := {ec_mul}(success, mload({zeta_mptr}))"),
-    //                                 format!("success := {ec_add}(success, {x}, {y})"),
-    //                             ]
-    //                         })
-    //                         .collect_vec()
-    //                 } else {
-    //                     let mptr = comms.first().unwrap().x().ptr();
-    //                     let mptr_end = mptr - 2 * comms.len();
-    //                     let x = Word::from(Ptr::new(loc, "mptr"));
-    //                     let y = Word::from(Ptr::new(loc, "add(mptr, 0x20)"));
-    //                     for_loop(
-    //                         [
-    //                             format!("let mptr := {mptr}"),
-    //                             format!("let mptr_end := {mptr_end}"),
-    //                         ],
-    //                         "lt(mptr_end, mptr)",
-    //                         ["mptr := sub(mptr, 0x40)".to_string()],
-    //                         [
-    //                             format!("success := {ec_mul}(success, mload({zeta_mptr}))"),
-    //                             format!("success := {ec_add}(success, {x}, {y})"),
-    //                         ],
-    //                     )
-    //                 }
-    //             }),
-    //             (!is_first_set)
-    //                 .then(|| {
-    //                     let scalar = format!("mulmod(nu, {set_coeff}, R)");
-    //                     chain![
-    //                         [
-    //                             format!("success := ec_mul_tmp(success, {scalar})"),
-    //                             format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
-    //                         ],
-    //                         (!is_last_set).then(|| format!("nu := mulmod(nu, mload({nu}), R)"))
-    //                     ]
-    //                 })
-    //                 .into_iter()
-    //                 .flatten(),
-    //         ]
-    //         .collect_vec()
-    //     }),
-    //     [
-    //         format!("mstore(0x80, mload({}))", g1_x),
-    //         format!("mstore(0xa0, mload({}))", g1_y),
-    //         format!("success := ec_mul_tmp(success, sub(R, mload({r_eval})))"),
-    //         format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
-    //         format!("mstore(0x80, {})", w.x()),
-    //         format!("mstore(0xa0, {})", w.y()),
-    //         format!("success := ec_mul_tmp(success, sub(R, {vanishing_0}))"),
-    //         format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
-    //         format!("mstore(0x80, {})", w_prime.x()),
-    //         format!("mstore(0xa0, {})", w_prime.y()),
-    //         format!("success := ec_mul_tmp(success, mload({mu}))"),
-    //         format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
-    //         format!("mstore({pairing_lhs_x}, mload(0x00))"),
-    //         format!("mstore({pairing_lhs_y}, mload(0x20))"),
-    //         format!("mstore({pairing_rhs_x}, {})", w_prime.x()),
-    //         format!("mstore({pairing_rhs_y}, {})", w_prime.y()),
-    //     ],
-    // ]
-    // .collect_vec();
-
-    // chain![
-    //     [point_computations, vanishing_computations],
-    //     coeff_computations,
-    //     [normalized_coeff_computations],
-    //     r_evals_computations,
-    //     coeff_sums_computation,
-    //     [r_eval_computations, pairing_input_computations],
-    // ]
-    // .collect_vec()
 }

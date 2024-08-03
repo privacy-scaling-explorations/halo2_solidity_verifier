@@ -442,6 +442,162 @@ contract Halo2Verifier {
                 }
             }
 
+            function pairing_input_computations_first(len, pcs_ptr, data, theta_mptr, success) -> ret {
+                mstore(0x00, calldataload(and(data, 0xFFFF)))
+                data := shr(16, data)
+                mstore(0x20, calldataload(and(data, 0xFFFF)))
+                data := shr(16, data)
+                for { let i := 0 } lt(i, len) { i := add(i, 0x20) } {
+                    for { } data { } {
+                        let ptr_loc := and(data, 0xFF)
+                        data := shr(8, data)
+                        let comm_len := and(data, 0xFF)
+                        data := shr(8, data)
+                        switch comm_len
+                        case 0x0 {
+                            switch ptr_loc 
+                            case 0x00 {
+                                for
+                                    {
+                                        let mptr := and(data, 0xFFFF)
+                                        data := shr(16, data)
+                                        let mptr_end := and(data, 0xFFFF)
+                                    }
+                                    lt(mptr_end, mptr)
+                                    { mptr := sub(mptr, 0x40) }
+                                {                      
+                                    success := ec_mul_acc(success, mload(add(theta_mptr, 0xA0)))
+                                    success := ec_add_acc(success, mload(mptr), mload(add(mptr, 0x20)))
+                                }
+                            } 
+                            case 0x01 {
+                                for
+                                    {
+                                        let mptr := and(data, 0xFFFF)
+                                        data := shr(16, data)
+                                        let mptr_end := and(data, 0xFFFF)
+                                    }
+                                    lt(mptr_end, mptr)
+                                    { mptr := sub(mptr, 0x40) }
+                                {                      
+                                    success := ec_mul_acc(success, mload(add(theta_mptr, 0xA0)))
+                                    success := ec_add_acc(success, calldataload(mptr), calldataload(add(mptr, 0x20)))
+                                }
+                            }
+                            data := shr(16, data)
+                        } default {
+                            switch ptr_loc                        
+                            case 0x00 {
+                                success := ec_mul_acc(success, mload(add(theta_mptr, 0xA0)))
+                                success := ec_add_acc(success, mload(and(data, 0xFFFF)), mload(and(shr(16,data), 0xFFFF)))
+                                if eq(comm_len, 0x02) {
+                                    data := shr(32, data)
+                                    success := ec_mul_acc(success, mload(add(theta_mptr, 0xA0)))
+                                    success := ec_add_acc(success, mload(and(data, 0xFFFF)), mload(and(shr(16,data), 0xFFFF)))
+                                }
+                                data := shr(32, data)
+                            }
+                            case 0x01 {
+                                success := ec_mul_acc(success, mload(add(theta_mptr, 0xA0)))
+                                success := ec_add_acc(success, calldataload(and(data, 0xFFFF)), calldataload(and(shr(16,data), 0xFFFF)))
+                                if eq(comm_len, 0x02) {
+                                    data := shr(32, data)
+                                    success := ec_mul_acc(success, mload(add(theta_mptr, 0xA0)))
+                                    success := ec_add_acc(success, calldataload(and(data, 0xFFFF)), calldataload(and(shr(16,data), 0xFFFF)))
+                                }
+                                data := shr(32, data)
+                            }
+                            // Quotient eval x and y points
+                            case 0x02 {
+                                success := ec_mul_acc(success, mload(add(theta_mptr, 0xA0)))
+                                success := ec_add_acc(success, mload(add(theta_mptr, 0x260)), mload(add(theta_mptr, 0x280)))
+                            }
+                        }
+                    }
+                    pcs_ptr := add(pcs_ptr, 0x20)
+                    data := mload(pcs_ptr)
+                }
+                ret := success
+            }
+
+            function pairing_input_computations(len, pcs_ptr, data, theta_mptr, success) -> ret {
+                mstore(0x80, calldataload(and(data, 0xFFFF)))
+                data := shr(16, data)
+                mstore(0xa0, calldataload(and(data, 0xFFFF)))
+                data := shr(16, data)
+                for { let i := 0 } lt(i, len) { i := add(i, 0x20) } {
+                    for { } data { } {
+                        let ptr_loc := and(data, 0xFF)
+                        data := shr(8, data)
+                        let comm_len := and(data, 0xFF)
+                        data := shr(8, data)
+                        switch comm_len
+                        case 0x0 {
+                            switch ptr_loc 
+                            case 0x00 {
+                                for
+                                    {
+                                        let mptr := and(data, 0xFFFF)
+                                        data := shr(16, data)
+                                        let mptr_end := and(data, 0xFFFF)
+                                    }
+                                    lt(mptr_end, mptr)
+                                    { mptr := sub(mptr, 0x40) }
+                                {                      
+                                    success := ec_mul_tmp(success, mload(add(theta_mptr, 0xA0)))
+                                    success := ec_add_tmp(success, mload(mptr), mload(add(mptr, 0x20)))
+                                }
+                            } 
+                            case 0x01 {
+                                for
+                                    {
+                                        let mptr := and(data, 0xFFFF)
+                                        data := shr(16, data)
+                                        let mptr_end := and(data, 0xFFFF)
+                                    }
+                                    lt(mptr_end, mptr)
+                                    { mptr := sub(mptr, 0x40) }
+                                {                      
+                                    success := ec_mul_tmp(success, mload(add(theta_mptr, 0xA0)))
+                                    success := ec_add_tmp(success, calldataload(mptr), calldataload(add(mptr, 0x20)))
+                                }
+                            }
+                            data := shr(16, data)
+                        } default {
+                            switch ptr_loc                        
+                            case 0x00 {
+                                success := ec_mul_tmp(success, mload(add(theta_mptr, 0xA0)))
+                                success := ec_add_tmp(success, mload(and(data, 0xFFFF)), mload(and(shr(16,data), 0xFFFF)))
+                                if eq(comm_len, 0x2) {
+                                    data := shr(32, data)
+                                    success := ec_mul_tmp(success, mload(add(theta_mptr, 0xA0)))
+                                    success := ec_add_tmp(success, mload(and(data, 0xFFFF)), mload(and(shr(16,data), 0xFFFF)))
+                                }
+                                data := shr(32, data)
+                            }
+                            case 0x01 {
+                                success := ec_mul_tmp(success, mload(add(theta_mptr, 0xA0)))
+                                success := ec_add_tmp(success, calldataload(and(data, 0xFFFF)), calldataload(and(shr(16,data), 0xFFFF)))
+                                if eq(comm_len, 0x2) {
+                                    data := shr(32, data)
+                                    success := ec_mul_tmp(success, mload(add(theta_mptr, 0xA0)))
+                                    success := ec_add_tmp(success, calldataload(and(data, 0xFFFF)), calldataload(and(shr(16,data), 0xFFFF)))
+                                }
+                                data := shr(32, data)
+                            }
+                            // Quotient eval x and y points
+                            case 0x02 {
+                                success := ec_mul_tmp(success, mload(add(theta_mptr, 0xA0)))
+                                success := ec_add_tmp(success, mload(add(theta_mptr, 0x260)), mload(add(theta_mptr, 0x280)))
+                            }
+                        }
+                    }
+                    pcs_ptr := add(pcs_ptr, 0x20)
+                    data := mload(pcs_ptr)
+                }
+                ret := success
+            }
+
             // Initialize success as true
             let success := true
             // Initialize vk_mptr as 0x0 on the stack
@@ -861,15 +1017,6 @@ contract Halo2Verifier {
             }
 
             // Compute pairing lhs and rhs
-            // TODO:
-            // [X] point_computations
-            // [x] vanishing_computation
-            // [x] coeff_computations
-            // [x] normalized_coeff_computations
-            // [x] r_evals_computations
-            // [x] coeff_sums_computation
-            // [] r_eval_computations
-            // [] pairing_input_computations
             {
                 // point_computations 
                 let pcs_ptr := add(vk_mptr, mload(add(vk_mptr, {{ vk_const_offsets["pcs_computations_len_offset"]|hex() }})))
@@ -945,12 +1092,11 @@ contract Halo2Verifier {
                         vanishing_computations := mload(pcs_ptr)
                     }
                 }
-
                 // coeff_computations
                 {
                     let coeff_len_data := mload(pcs_ptr)
                     // Load in the least significant byte of the `coeff_len_data` word to get the total number of words we will need to load in
-                    // that contain the packed Vec<set.rots().len()>. 
+                    // that contains the packed Vec<set.rots().len()>. 
                     let end_ptr_packed_lens := add(pcs_ptr, mul(0x20, and(coeff_len_data, 0xFF)))
                     coeff_len_data := shr(8, coeff_len_data)
                     let i := pcs_ptr
@@ -1041,13 +1187,105 @@ contract Halo2Verifier {
                     }
 
                 }
-                {%- for code_block in pcs_computations %}
+                // r_eval_computation
                 {
-                    {%- for line in code_block %}
-                    {{ line }}
-                    {%- endfor %}
+                    let r_eval_data := mload(pcs_ptr)
+                    let mptr_end := and(r_eval_data, 0xFFFF)                    
+                    for
+                        {
+                            let mptr := 0x00
+                            r_eval_data := shr(16, r_eval_data)
+                            let sum_mptr := and(r_eval_data, 0xFFFF)
+                        }
+                        lt(mptr, mptr_end)
+                        {
+                            mptr := add(mptr, 0x20)
+                            sum_mptr := add(sum_mptr, 0x20)
+                        }
+                    {
+                        mstore(mptr, mload(sum_mptr))
+                    }
+                    r_eval_data := shr(16, r_eval_data)
+                    success := batch_invert(success, 0, mptr_end)
+                    let r_eval_ptr := and(r_eval_data, 0xFFFF)
+                    let r_eval := mulmod(mload(sub(mptr_end, 0x20)), mload(r_eval_ptr), R)
+                    r_eval_data := shr(16, r_eval_data)
+                    for
+                        {
+                            let sum_inv_mptr := sub(mptr_end, 0x40)
+                            let sum_inv_mptr_end := mptr_end
+                            let r_eval_mptr := sub(r_eval_ptr, 0x20)
+                        }
+                        lt(sum_inv_mptr, sum_inv_mptr_end)
+                        {
+                            sum_inv_mptr := sub(sum_inv_mptr, 0x20)
+                            r_eval_mptr := sub(r_eval_mptr, 0x20)
+                        }
+                    {
+                        r_eval := mulmod(r_eval, mload(add(theta_mptr, 0xC0)), R)
+                        r_eval := addmod(r_eval, mulmod(mload(sum_inv_mptr), mload(r_eval_mptr), R), R)
+                    }
+                    mstore(add(theta_mptr, 0x2A0), r_eval)
+                    pcs_ptr := add(pcs_ptr, 0x20)
                 }
-                {%- endfor %}
+                // pairing_input_computations
+                let nu := mload(add(theta_mptr, 0xC0))
+                {
+                    let pairing_input_meta_data := mload(pcs_ptr)
+                    let end_ptr_packed_lens := add(pcs_ptr, mul(0x20, and(pairing_input_meta_data, 0xFF)))
+                    pairing_input_meta_data := shr(8, pairing_input_meta_data)
+                    let set_coeff := and(pairing_input_meta_data, 0xFFFF)
+                    pairing_input_meta_data := shr(16, pairing_input_meta_data)
+                    let ec_points_cptr_packed := and(pairing_input_meta_data, 0xFFFFFFFFFFFFFFFFFFFF)
+                    pairing_input_meta_data := shr(80, pairing_input_meta_data)
+                    let i := pcs_ptr
+                    pcs_ptr := end_ptr_packed_lens
+                    let first := 1
+                    for {  } lt(i, end_ptr_packed_lens) { i := add(i, 0x20) } {
+                        for {  } pairing_input_meta_data { } {
+                            let len := and(pairing_input_meta_data, 0xFF)
+                            pairing_input_meta_data := shr(8, pairing_input_meta_data)
+                            if first {
+                                first := 0
+                                success := pairing_input_computations_first(len, pcs_ptr, mload(pcs_ptr), theta_mptr, success)
+                                pcs_ptr := add(pcs_ptr, len)
+                                continue
+                            }
+                            success := pairing_input_computations(len, pcs_ptr, mload(pcs_ptr), theta_mptr, success)
+                            pcs_ptr := add(pcs_ptr, len)
+                            success := ec_mul_tmp(success, mulmod(nu, mload(set_coeff), R))
+                            set_coeff := add(set_coeff, 0x20)
+                            success := ec_add_acc(success, mload(0x80), mload(0xa0))
+                            // execute this if statement if not the last set
+                            if or(0x1, lt(i, sub(end_ptr_packed_lens, 0x20))) {
+                                nu := mulmod(nu, mload(add(theta_mptr, 0xC0)), R)
+                            }
+                        }
+                        pairing_input_meta_data := mload(add(i, 0x20))
+                    }
+                    mstore(0x80, mload(add(vk_mptr, {{ vk_const_offsets["g1_x"]|hex() }})))
+                    mstore(0xa0, mload(add(vk_mptr, {{ vk_const_offsets["g1_y"]|hex() }})))
+                    success := ec_mul_tmp(success, sub(R, mload(add(theta_mptr, 0x2A0))))
+                    success := ec_add_acc(success, mload(0x80), mload(0xa0))
+                    mstore(0x80, calldataload(and(ec_points_cptr_packed, 0xFFFF)))
+                    ec_points_cptr_packed := shr(16, ec_points_cptr_packed)
+                    mstore(0xa0, calldataload(and(ec_points_cptr_packed, 0xFFFF)))
+                    ec_points_cptr_packed := shr(16, ec_points_cptr_packed)
+                    success := ec_mul_tmp(success, sub(R, mload(and(ec_points_cptr_packed, 0xFFFF))))
+                    ec_points_cptr_packed := shr(16, ec_points_cptr_packed)
+                    success := ec_add_acc(success, mload(0x80), mload(0xa0))
+                    let w_prime_x := calldataload(and(ec_points_cptr_packed, 0xFFFF))
+                    ec_points_cptr_packed := shr(16, ec_points_cptr_packed)
+                    let w_prime_y := calldataload(and(ec_points_cptr_packed, 0xFFFF))
+                    mstore(0x80, w_prime_x)
+                    mstore(0xa0, w_prime_y)
+                    success := ec_mul_tmp(success, mload(add(theta_mptr, 0xE0)))
+                    success := ec_add_acc(success, mload(0x80), mload(0xa0))
+                    mstore(add(theta_mptr, 0x2C0), mload(0x00))
+                    mstore(add(theta_mptr, 0x2E0), mload(0x20))
+                    mstore(add(theta_mptr, 0x300), w_prime_x)
+                    mstore(add(theta_mptr, 0x320), w_prime_y)
+                }
             }
 
             // Random linear combine with accumulator

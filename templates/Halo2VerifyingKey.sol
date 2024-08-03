@@ -96,8 +96,14 @@ contract Halo2VerifyingKey {
             mstore({{ (32 * (offset_1 + loop.index0))|hex_padded(4) }}, {{ r_eval_word|hex_padded(64) }}) // r_evals_computations[{{ loop.index0 }}]
             {%- endfor %}
             {%- let offset_2 = offset_1 + pcs_computations.r_evals_computations.len() %}
-            {%- for coeff_sum in pcs_computations.coeff_sums_computation %}
-            mstore({{ (32 * (offset_2 + loop.index0))|hex_padded(4) }}, {{ coeff_sum|hex_padded(64) }}) // coeff_sums_computation[{{ loop.index0 }}]
+            {%- for coeff_sum_word in pcs_computations.coeff_sums_computation %}
+            mstore({{ (32 * (offset_2 + loop.index0))|hex_padded(4) }}, {{ coeff_sum_word|hex_padded(64) }}) // coeff_sums_computations[{{ loop.index0 }}]
+            {%- endfor %}
+            {%- let offset_3 = offset_2 + pcs_computations.coeff_sums_computation.len() %}
+            mstore({{ (32 * offset_3)|hex_padded(4) }}, {{ pcs_computations.r_eval_computations|hex_padded(64) }}) // r_eval_computations
+            {%- let offset_4 = offset_3 + 1 %}
+            {%- for pairing_input_word in pcs_computations.pairing_input_computations %}
+            mstore({{ (32 * (offset_4 + loop.index0))|hex_padded(4) }}, {{ pairing_input_word|hex_padded(64) }}) // pairing_input_computations[{{ loop.index0 }}]
             {%- endfor %}
             return(0, {{ (32 * (constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 + gate_computations.len() + permutation_computations.len() + lookup_computations.len() + pcs_computations.len()))|hex() }})
         }

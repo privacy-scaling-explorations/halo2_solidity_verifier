@@ -570,42 +570,14 @@ impl<'a> SolidityGenerator<'a> {
     }
 
     fn generate_separate_verifier(&self) -> Halo2VerifierReusable {
-        let proof_cptr = Ptr::calldata(0x84);
-
-        let vk = self.generate_vk(true);
-        let vk_m = self.estimate_static_working_memory_size(&vk, proof_cptr, true);
-        let vk_mptr = Ptr::memory(vk_m);
-        // if separate then create a hashmap of vk.const_expressions values to its vk memory location.
-        let mut vk_lookup_const_table: HashMap<ruint::Uint<256, 4>, Ptr> = HashMap::new();
-        // create hashmap of vk.const_expressions values to its vk memory location.
-        let offset = vk_m
-            + (vk.constants.len() * 0x20)
-            + (vk.fixed_comms.len() + vk.permutation_comms.len()) * 0x40;
-        // keys to the map are the values of vk.const_expressions and values are the memory location of the vk.const_expressions.
-        vk.const_expressions
-            .iter()
-            .enumerate()
-            .for_each(|(idx, _)| {
-                let mptr = offset + (0x20 * idx);
-                let mptr = Ptr::memory(mptr);
-                vk_lookup_const_table.insert(vk.const_expressions[idx], mptr);
-            });
-
-        let data = Data::new(&self.meta, &vk, vk_mptr, proof_cptr, true);
         let vk_const_offsets: HashMap<&'static str, U256> = Self::dummy_vk_constants(true)
             .iter()
             .enumerate()
             .map(|(idx, &(key, _))| (key, U256::from(idx * 32)))
             .collect();
 
-        let pcs_computations = match self.scheme {
-            Bdfg21 => bdfg21_computations(&self.meta, &data, true),
-            Gwc19 => unimplemented!(),
-        };
-
         Halo2VerifierReusable {
             scheme: self.scheme,
-            pcs_computations,
             vk_const_offsets,
         }
     }
