@@ -16,7 +16,7 @@ use super::{
 #[template(path = "Halo2VerifyingKey.sol")]
 pub(crate) struct Halo2VerifyingKey {
     pub(crate) constants: Vec<(&'static str, U256)>,
-    pub(crate) num_advices_user_challenges: Vec<(U256, U256)>,
+    pub(crate) num_advices_user_challenges: Vec<U256>,
     pub(crate) fixed_comms: Vec<(U256, U256)>,
     pub(crate) permutation_comms: Vec<(U256, U256)>,
     pub(crate) const_expressions: Vec<U256>,
@@ -31,7 +31,7 @@ impl Halo2VerifyingKey {
         (self.constants.len() * 0x20)
             + (self.fixed_comms.len() + self.permutation_comms.len()) * 0x40
             + (self.const_expressions.len() * 0x20)
-            + ((self.num_advices_user_challenges.len() * 0x40) + 0x20)
+            + (self.num_advices_user_challenges.len() * 0x20)
             + (self.gate_computations.len() * 0x20)
             + (self.permutation_computations.len() * 0x20)
             + (self.lookup_computations.len() * 0x20)

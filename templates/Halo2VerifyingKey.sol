@@ -22,26 +22,23 @@ contract Halo2VerifyingKey {
             {%- let offset = constants.len() + 2 * fixed_comms.len() + 2 * permutation_comms.len() %}
             mstore({{ (32 * (offset + loop.index0))|hex_padded(4) }}, {{ const|hex_padded(64) }}) // const_expressions[{{ loop.index0 }}]
             {%- endfor %}
+            {%- for word in num_advices_user_challenges %}
             {%- let offset = constants.len() + 2 * fixed_comms.len() + 2 * permutation_comms.len() + const_expressions.len() %}
-            mstore({{ (32 * offset)|hex_padded(4) }}, {{(2 * 32 * num_advices_user_challenges.len())|hex_padded(64) }}) // num_advices_user_challenges length
-            {%- for (x, y) in num_advices_user_challenges %}
-            {%- let offset = constants.len() + 2 * fixed_comms.len() + 2 * permutation_comms.len() + const_expressions.len() + 1 %}
-            mstore({{ (32 * (offset + 2 * loop.index0))|hex_padded(4) }}, {{ x|hex_padded(64) }}) // num_advices[{{ loop.index0 }}].x
-            mstore({{ (32 * (offset + 2 * loop.index0 + 1))|hex_padded(4) }}, {{ y|hex_padded(64) }}) // user_challenges[{{ loop.index0 }}].y
+            mstore({{ (32 * (offset + loop.index0))|hex_padded(4) }}, {{ word|hex_padded(64) }}) // num_advices_challenges[{{ loop.index0 }}]
             {%- endfor %}
-            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 %}
+            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len()) + num_advices_user_challenges.len() + const_expressions.len() %}
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ (32 * gate_computations.length)|hex_padded(64) }}) // gate_computations length
             {%- for packed_expression_word in gate_computations.packed_expression_words %}
-            {%- let base_offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 2 %}
+            {%- let base_offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len()) + num_advices_user_challenges.len() + const_expressions.len() + 1 %}
             {%- let offset = base_offset + loop.index0 %}
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ packed_expression_word|hex_padded(64) }}) // packed_expression_word [{{ loop.index0 }}]
             {%- endfor %}
-            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 + gate_computations.len() %}
+            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len()) + num_advices_user_challenges.len() + const_expressions.len() + gate_computations.len() %}
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ permutation_computations.z_evals_last_idx|hex_padded(64) }}) // z_evals_last_idx
-            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 2 + gate_computations.len() %}
+            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len()) + num_advices_user_challenges.len() + const_expressions.len() + 1 + gate_computations.len() %}
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ permutation_computations.chunk_offset|hex_padded(64) }}) // chunk_offset
             {%- for z_eval in permutation_computations.permutation_z_evals %}
-            {%- let base_offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 3 + gate_computations.len() %}
+            {%- let base_offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len()) + num_advices_user_challenges.len() + const_expressions.len() + 2 + gate_computations.len() %}
             {%- let offset = base_offset + loop.index0 * (permutation_computations.column_evals[0].len() + 1)%}
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ z_eval|hex_padded(64) }}) // permutation_z_evals[{{ loop.index0 }}]
             {%- let last_index = permutation_computations.permutation_z_evals.len() - 1 %}
@@ -58,10 +55,10 @@ contract Halo2VerifyingKey {
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ column_eval|hex_padded(64) }}) // column_eval[{{ loop.index0 }}]
             {%- endfor %}
             {%- endfor %}
-            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 + gate_computations.len() + permutation_computations.len() %}
+            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len()) + num_advices_user_challenges.len() + const_expressions.len() + gate_computations.len() + permutation_computations.len() %}
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ lookup_computations.end_ptr|hex_padded(64) }}) // end_ptr of lookup_computations
             {%- for lookup in lookup_computations.lookups %}
-            {%- let base_offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 2 + gate_computations.len() + permutation_computations.len() %}
+            {%- let base_offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len()) + num_advices_user_challenges.len() + 1 + const_expressions.len() + gate_computations.len() + permutation_computations.len() %}
             {%- let offset = base_offset + (loop.index0 * 3) + lookup.acc %}
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ lookup.evals|hex_padded(64) }}) // lookup_evals[{{ loop.index0 }}]
             {%- for table_line in lookup.table_lines %}
@@ -77,19 +74,19 @@ contract Halo2VerifyingKey {
             mstore({{ (32 * (offset + input.expression.len() + 1))|hex_padded(4) }}, {{ input.vars|hex_padded(64) }}) // input_vars [{{ loop.index0 }}]
             {%- endfor %}
             {%- endfor %}
-            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 + gate_computations.len() + permutation_computations.len() + lookup_computations.len() %}
+            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len()) + num_advices_user_challenges.len() + const_expressions.len() + gate_computations.len() + permutation_computations.len() + lookup_computations.len() %}
             {%- for point_word in pcs_computations.point_computations %}
             mstore({{ (32 * (offset + loop.index0))|hex_padded(4) }}, {{ point_word|hex_padded(64) }}) // point_computations[{{ loop.index0 }}]
             {%- endfor %}
-            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 + gate_computations.len() + permutation_computations.len() + lookup_computations.len() + pcs_computations.point_computations.len() %}
+            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len()) + num_advices_user_challenges.len() + const_expressions.len() + gate_computations.len() + permutation_computations.len() + lookup_computations.len() + pcs_computations.point_computations.len() %}
             {%- for vanishing_word in pcs_computations.vanishing_computations %}
             mstore({{ (32 * (offset + loop.index0))|hex_padded(4) }}, {{ vanishing_word|hex_padded(64) }}) // vanishing_computations[{{ loop.index0 }}]
             {%- endfor %}
-            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 + gate_computations.len() + permutation_computations.len() + lookup_computations.len() + pcs_computations.point_computations.len() + pcs_computations.vanishing_computations.len() %}
+            {%- let offset = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len()) + num_advices_user_challenges.len() + const_expressions.len() + gate_computations.len() + permutation_computations.len() + lookup_computations.len() + pcs_computations.point_computations.len() + pcs_computations.vanishing_computations.len() %}
             {%- for coeff_word in pcs_computations.coeff_computations %}
             mstore({{ (32 * (offset + loop.index0))|hex_padded(4) }}, {{ coeff_word|hex_padded(64) }}) // coeff_computations[{{ loop.index0 }}]
             {%- endfor %}
-            {%- let offset_0 = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 + gate_computations.len() + permutation_computations.len() + lookup_computations.len() + pcs_computations.point_computations.len() + pcs_computations.vanishing_computations.len() + pcs_computations.coeff_computations.len() %}
+            {%- let offset_0 = constants.len() + 2 * (fixed_comms.len() + permutation_comms.len()) + num_advices_user_challenges.len() + const_expressions.len() + gate_computations.len() + permutation_computations.len() + lookup_computations.len() + pcs_computations.point_computations.len() + pcs_computations.vanishing_computations.len() + pcs_computations.coeff_computations.len() %}
             mstore({{ (32 * offset_0)|hex_padded(4) }}, {{ pcs_computations.normalized_coeff_computations|hex_padded(64) }}) // normalized_coeff_computations
             {%- let offset_1 = offset_0 + 1 %}
             {%- for r_eval_word in pcs_computations.r_evals_computations %}
@@ -105,7 +102,7 @@ contract Halo2VerifyingKey {
             {%- for pairing_input_word in pcs_computations.pairing_input_computations %}
             mstore({{ (32 * (offset_4 + loop.index0))|hex_padded(4) }}, {{ pairing_input_word|hex_padded(64) }}) // pairing_input_computations[{{ loop.index0 }}]
             {%- endfor %}
-            return(0, {{ (32 * (constants.len() + 2 * (fixed_comms.len() + permutation_comms.len() + num_advices_user_challenges.len()) + const_expressions.len() + 1 + gate_computations.len() + permutation_computations.len() + lookup_computations.len() + pcs_computations.len()))|hex() }})
+            return(0, {{ (32 * (constants.len() + 2 * (fixed_comms.len() + permutation_comms.len()) + num_advices_user_challenges.len() + const_expressions.len() + gate_computations.len() + permutation_computations.len() + lookup_computations.len() + pcs_computations.len()))|hex() }})
         }
     }
 }

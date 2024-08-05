@@ -391,14 +391,31 @@ impl<'a> SolidityGenerator<'a> {
             .take(num_advices.len())
             .copied()
             .collect::<Vec<_>>();
-        // Create a new vec of type of Vec<usize, usize> with the values of num_advices and num_user_challenges.
-        let num_advices_user_challenges: Vec<(U256, U256)> = num_advices
-            .iter()
-            .zip(num_user_challenges.iter())
-            .map(|(num_advices, num_user_challenges)| {
-                (U256::from(*num_advices), U256::from(*num_user_challenges))
-            })
-            .collect_vec();
+
+        let num_advices_user_challenges: Vec<U256> = {
+            let mut packed_words: Vec<U256> = vec![U256::from(0)];
+            let mut bit_counter = 8;
+            let mut last_idx = 0;
+            for (num_advices, num_user_challenges) in
+                num_advices.iter().zip(num_user_challenges.iter())
+            {
+                let offset = 24;
+                let next_bit_counter = bit_counter + offset;
+                if next_bit_counter > 256 {
+                    last_idx += 1;
+                    packed_words.push(U256::from(0));
+                    bit_counter = 0;
+                }
+                packed_words[last_idx] |= U256::from(*num_advices * 0x40) << bit_counter;
+                bit_counter += 16;
+                packed_words[last_idx] |= U256::from(*num_user_challenges) << bit_counter;
+                bit_counter += 8;
+            }
+            let packed_words_len = packed_words.len();
+            // Encode the length of the exprs vec in the first word
+            packed_words[0] |= U256::from(packed_words_len);
+            packed_words
+        };
 
         // Update constants
 
@@ -408,8 +425,8 @@ impl<'a> SolidityGenerator<'a> {
         let num_advices_user_challenges_offset = (constants.len() * 0x20)
             + (fixed_comms.len() + permutation_comms.len()) * 0x40
             + (const_expressions.len() * 0x20);
-        let gate_computations_len_offset = num_advices_user_challenges_offset
-            + ((num_advices_user_challenges.len() * 0x40) + 0x20);
+        let gate_computations_len_offset =
+            num_advices_user_challenges_offset + (num_advices_user_challenges.len() * 0x20);
         let permutations_computations_len_offset =
             gate_computations_len_offset + (0x20 * gate_computations_dummy.len());
         let lookup_computations_len_offset =

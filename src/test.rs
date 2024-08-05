@@ -100,9 +100,12 @@ fn run_render_separately<C: halo2::TestCircuit<Fr>>() {
         // // print verifier_solidity
         // println!("Verifier solidity: {verifier_solidity}");
         // // print vk_solidity
-        // println!("VK solidity: {vk_solidity}");
+        println!("VK solidity: {vk_solidity}");
+        // VK creation code size
 
         let vk_creation_code = compile_solidity(&vk_solidity);
+        let vk_creation_code_size = vk_creation_code.len();
+        println!("VK creation code size: {vk_creation_code_size}");
         let vk_address = evm.create(vk_creation_code);
 
         let (gas_cost, output) = evm.call(

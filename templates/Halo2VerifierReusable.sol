@@ -161,7 +161,8 @@ contract Halo2Verifier {
                 ret1 := mload(computations_len_ptr) // Remember this length represented in bytes
             }
 
-            
+            // Returns the length of the SoA layout for the permutation z evaluations ptr, the permutation z evals ptr, 
+            // the permutation chunk length and the first permutation z eval. 
             function perm_comp_layout_metadata(offset, vk_mptr) -> ret0, ret1, ret2, ret3 {
                 let computations_ptr, computations_len := soa_layout_metadata(offset, vk_mptr)
                 let permutation_z_evals_ptr := add(computations_ptr, 0x20)
@@ -640,29 +641,54 @@ contract Halo2Verifier {
                 let challenge_mptr := add(vk_mptr, vk_len) // challenge_mptr is at the end of vk in memory
                 // Set the theta_mptr (vk_mptr + vk_len + challenges_length)
                 theta_mptr := add(challenge_mptr, mload(add(vk_mptr, {{ vk_const_offsets["challenges_offset"]|hex() }})))
-                let num_advices_ptr := add(vk_mptr, mload(add(vk_mptr, {{ vk_const_offsets["num_advices_user_challenges_offset"]|hex() }})))
-                let num_advices_len := mload(num_advices_ptr)
-                let advices_ptr := add(num_advices_ptr, 0x20) // start of advices
-                let challenges_ptr := add(advices_ptr, 0x20) // start of challenges
+                let challenge_len_ptr := add(vk_mptr, mload(add(vk_mptr, {{ vk_const_offsets["num_advices_user_challenges_offset"]|hex() }})))
+                
+                let challenge_len_data := mload(challenge_len_ptr)
+                let num_words := and(challenge_len_data, 0xFF)
+                challenge_len_data := shr(8, challenge_len_data)
+                for { let i := 0 } lt(i, 1) { i := add(i, 1) } {
+                    for { } challenge_len_data { } {
+                        // add proof_cpt to num advices len
+                        let proof_cptr_end := add(proof_cptr, and(challenge_len_data, 0xFFFF))
+                        challenge_len_data := shr(16, challenge_len_data)
+                        // Phase loop
+                        for { } lt(proof_cptr, proof_cptr_end) { } {
+                            success, proof_cptr, hash_mptr := read_ec_point(success, proof_cptr, hash_mptr)
+                        }
+                        // Generate challenges
+                        challenge_mptr, hash_mptr := squeeze_challenge(challenge_mptr, hash_mptr)
 
-                // Iterate over phases using the loaded num_advices and num_challenges
-                for { let phase := 0 } lt(phase, num_advices_len) { phase := add(phase, 0x40) } {
-                    // Calculate proof_cptr_end based on num_advices
-                    let proof_cptr_end := add(proof_cptr, mul(0x40, mload(add(advices_ptr, phase)))) // We use 0x40 because each advice is followed by the corresponding challenge
-
-                    // Phase loop
-                    for { } lt(proof_cptr, proof_cptr_end) { } {
-                        success, proof_cptr, hash_mptr := read_ec_point(success, proof_cptr, hash_mptr)
+                        // Continue squeezing challenges based on num_challenges
+                        let num_challenges := and(challenge_len_data, 0xFF)
+                        challenge_len_data := shr(8, challenge_len_data)
+                        for { let c := 1 } lt(c, num_challenges) { c := add(c, 1) } { 
+                            challenge_mptr := squeeze_challenge_cont(challenge_mptr)
+                        }
                     }
-
-                    // Generate challenges
-                    challenge_mptr, hash_mptr := squeeze_challenge(challenge_mptr, hash_mptr)
-
-                    // Continue squeezing challenges based on num_challenges
-                    for { let c := 1 } lt(c, mload(add(challenges_ptr, phase))) { c := add(c, 1) } { // We 
-                        challenge_mptr := squeeze_challenge_cont(challenge_mptr)
-                    }
+                    challenge_len_ptr := add(challenge_len_ptr, 0x20)
+                    challenge_len_data := mload(challenge_len_ptr)
                 }
+                // let advices_ptr := add(num_advices_ptr, 0x20) // start of advices
+                // let challenges_ptr := add(advices_ptr, 0x20) // start of challenges
+
+                // // Iterate over phases using the loaded num_advices and num_challenges
+                // for { let phase := 0 } lt(phase, num_advices_len) { phase := add(phase, 0x40) } {
+                //     // Calculate proof_cptr_end based on num_advices
+                //     let proof_cptr_end := add(proof_cptr, mul(0x40, mload(add(advices_ptr, phase)))) // We use 0x40 because each advice is followed by the corresponding challenge
+
+                //     // Phase loop
+                //     for { } lt(proof_cptr, proof_cptr_end) { } {
+                //         success, proof_cptr, hash_mptr := read_ec_point(success, proof_cptr, hash_mptr)
+                //     }
+
+                //     // Generate challenges
+                //     challenge_mptr, hash_mptr := squeeze_challenge(challenge_mptr, hash_mptr)
+
+                //     // Continue squeezing challenges based on num_challenges
+                //     for { let c := 1 } lt(c, mload(add(challenges_ptr, phase))) { c := add(c, 1) } { 
+                //         challenge_mptr := squeeze_challenge_cont(challenge_mptr)
+                //     }
+                // }
 
                 // Read evaluations
                 for

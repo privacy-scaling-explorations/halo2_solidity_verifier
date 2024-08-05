@@ -937,8 +937,7 @@ pub(crate) fn bdfg21_computations_separate(
     // depending on if it is a single rotation set or not.
     // 3. Here is how the encoding of the single rotation set will look like:
     // 3a. After the 1 byte that contains the number of words with the packed ptr data for the given set, we encode the coeffs[0] ptr,
-    // the first eval ptr of the first group. TODO we need to assert that there is only one group of evals for a single rotation set, and that the eval in the second group index
-    // 1 is the quotient eval ptr.
+    // the first eval ptr of the first group.
     // 3b. Next we encode the number of eval ptrs in the eval_group, encoding the eval ptrs that follow until we reach the end of the eval_group, repeating the process for the next eval_group.
     // 4. Here is how the encoding of the not single rotation set will look like:
     // 4a. After the 1 byte that contains the number of words with the packed ptr data for the given set, the coeffs ptrs,

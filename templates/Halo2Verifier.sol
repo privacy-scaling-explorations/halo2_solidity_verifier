@@ -214,7 +214,7 @@ contract Halo2Verifier {
 
             // Modulus
             let q := 21888242871839275222246405745257275088696311157297823662689037894645226208583 // BN254 base field
-            let r := 21888242871839275222246405745257275088548364400416034343698204186575808495617 // BN254 scalar field TODO: rmv this and replace with constant R
+            let r := 21888242871839275222246405745257275088548364400416034343698204186575808495617 // BN254 scalar field 
 
             // Initialize success as true
             let success := true

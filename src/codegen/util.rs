@@ -401,7 +401,7 @@ impl Data {
         let challenge_mptr = permutation_comm_mptr
             + (2 * vk.permutation_comms.len())
             + vk.const_expressions.len()
-            + (2 * vk.num_advices_user_challenges.len() + 1)
+            + vk.num_advices_user_challenges.len()
             + (vk.gate_computations.len())
             + (vk.permutation_computations.len())
             + (vk.lookup_computations.len())
