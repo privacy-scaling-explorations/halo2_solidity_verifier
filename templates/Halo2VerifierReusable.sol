@@ -174,7 +174,7 @@ contract Halo2Verifier {
                 ret3 := permutation_z_evals
             }
 
-            function col_evals(z, chunk, permutation_z_evals_ptr, theta_mptr) {
+            function col_evals(z, num_words, permutation_z_evals_ptr, theta_mptr) {
                 let gamma := mload(add(theta_mptr, 0x40))
                 let beta := mload(add(theta_mptr, 0x20))
                 let x := mload(add(theta_mptr, 0x80))
@@ -183,17 +183,21 @@ contract Halo2Verifier {
                 let i_eval := mload(add(theta_mptr, 0x220))
                 // Extract the index 1 and index 0 z evaluations from the z word. 
                 let lhs := calldataload(and(shr(16,z), 0xFFFF)) 
-                let rhs := calldataload(and(z, 0xFFFF))   
+                let rhs := calldataload(and(z, 0xFFFF)) 
+                z := shr(48, z)  
                 // loop through the word_len_chunk
-                for { let j := 0x20 } lt(j, chunk) { j := add(j, 0x20) } {
-                    let col_word := mload(add(permutation_z_evals_ptr, j))
-                    let eval := i_eval
-                    if eq(and(col_word, 0xFF), 0x00) {
-                        eval := calldataload(and(shr(8, col_word), 0xFFFF))
+                for { let j := 0 } lt(j, num_words) { j := add(j, 0x20) } {
+                    for { } z { } {
+                        let eval := i_eval
+                        if eq(and(z, 0xFF), 0x00) {
+                            eval := calldataload(and(shr(8, z), 0xFFFF))
+                        }
+                        lhs := mulmod(lhs, addmod(addmod(eval, mulmod(beta, calldataload(and(shr(24, z), 0xFFFF)), R), R), gamma, R), R)
+                        rhs := mulmod(rhs, addmod(addmod(eval, mload(0x00), R), gamma, R), R)
+                        z := shr(40, z)
+                        mstore(0x00, mulmod(mload(0x00), DELTA, R))
                     }
-                    lhs := mulmod(lhs, addmod(addmod(eval, mulmod(beta, calldataload(and(shr(24, col_word), 0xFFFF)), R), R), gamma, R), R)
-                    rhs := mulmod(rhs, addmod(addmod(eval, mload(0x00), R), gamma, R), R)
-                    mstore(0x00, mulmod(mload(0x00), DELTA, R))
+                    z := mload(add(permutation_z_evals_ptr, add(j, 0x20)))
                 }
                 let left_sub_right := addmod(lhs, sub(R, rhs), R)
                 let fsm_ptr := mload(0x20)
@@ -201,27 +205,27 @@ contract Halo2Verifier {
                 mstore(0x20, add(fsm_ptr,0x20))
             }
 
-            function z_evals(z, permutation_chunk, perm_z_last_ptr, permutation_z_evals_ptr, theta_mptr, l_0, y, quotient_eval_numer) -> ret {
+            function z_evals(z, num_words_packed, perm_z_last_ptr, permutation_z_evals_ptr, theta_mptr, l_0, y, quotient_eval_numer) -> ret {
+                let num_words := and(num_words_packed, 0xFFFF)
                 // Initialize the free static memory pointer to store the column evals.
                 mstore(0x20, 0x40)
                 // Iterate through the tuple window length ( permutation_z_evals_len.len() - 1 ) offset by one word.
                 for { } lt(permutation_z_evals_ptr, perm_z_last_ptr) { } {
-                    let next_z_ptr := add(permutation_z_evals_ptr, permutation_chunk)
+                    let next_z_ptr := add(permutation_z_evals_ptr, num_words)
                     let z_j := mload(next_z_ptr)
                     quotient_eval_numer := addmod(
                         mulmod(quotient_eval_numer, y, R),
                         mulmod(l_0, addmod(calldataload(and(z_j, 0xFFFF)), sub(R, calldataload(and(shr(32,z), 0xFFFF))), R), R), 
                         R
                     )
-                    col_evals(z, permutation_chunk, permutation_z_evals_ptr, theta_mptr)
+                    col_evals(z, num_words, permutation_z_evals_ptr, theta_mptr)
                     permutation_z_evals_ptr := next_z_ptr
                     z := z_j
                 } 
                 // Due to the fact that permutation_columns.len() in H2 might not be divisble by permutation_chunk_len, the last column length might be less than permutation_chunk_len
-                // We store this length right after the last perm_z_evals word.
-                let chunk_offset_last_ptr := add(permutation_z_evals_ptr, 0x20) 
-                permutation_chunk := mload(chunk_offset_last_ptr) // Remeber to store (columns.len() + 1) * 32 here
-                col_evals(z, permutation_chunk, chunk_offset_last_ptr, theta_mptr)
+                // We store this length in the last 16 bits of the num_words_packed word.
+                num_words := and(shr(16, num_words_packed), 0xFFFF)
+                col_evals(z, num_words, permutation_z_evals_ptr, theta_mptr)
                 // iterate through col_evals to update the quotient_eval_numer accumulator
                 let end_ptr := mload(0x20)
                 for { let j := 0x40 } lt(j, end_ptr) { j := add(j, 0x20) } {
@@ -668,27 +672,6 @@ contract Halo2Verifier {
                     challenge_len_ptr := add(challenge_len_ptr, 0x20)
                     challenge_len_data := mload(challenge_len_ptr)
                 }
-                // let advices_ptr := add(num_advices_ptr, 0x20) // start of advices
-                // let challenges_ptr := add(advices_ptr, 0x20) // start of challenges
-
-                // // Iterate over phases using the loaded num_advices and num_challenges
-                // for { let phase := 0 } lt(phase, num_advices_len) { phase := add(phase, 0x40) } {
-                //     // Calculate proof_cptr_end based on num_advices
-                //     let proof_cptr_end := add(proof_cptr, mul(0x40, mload(add(advices_ptr, phase)))) // We use 0x40 because each advice is followed by the corresponding challenge
-
-                //     // Phase loop
-                //     for { } lt(proof_cptr, proof_cptr_end) { } {
-                //         success, proof_cptr, hash_mptr := read_ec_point(success, proof_cptr, hash_mptr)
-                //     }
-
-                //     // Generate challenges
-                //     challenge_mptr, hash_mptr := squeeze_challenge(challenge_mptr, hash_mptr)
-
-                //     // Continue squeezing challenges based on num_challenges
-                //     for { let c := 1 } lt(c, mload(add(challenges_ptr, phase))) { c := add(c, 1) } { 
-                //         challenge_mptr := squeeze_challenge_cont(challenge_mptr)
-                //     }
-                // }
 
                 // Read evaluations
                 for
@@ -856,7 +839,7 @@ contract Halo2Verifier {
                 let y := mload(add(theta_mptr, 0x60))
                 {
                     // Gate computations / expression evaluations.
-                    let computations_ptr, computations_len := soa_layout_metadata(0x380, vk_mptr)
+                    let computations_ptr, computations_len := soa_layout_metadata({{ vk_const_offsets["gate_computations_len_offset"]|hex() }}, vk_mptr)
                     let expressions_word := mload(computations_ptr) 
                     let last_idx
                     // Load in the total number of code blocks from the vk constants, right after the number challenges
@@ -878,7 +861,18 @@ contract Halo2Verifier {
                 }
                 {
                     // Permutation computations
-                    let computations_len, permutation_z_evals_ptr, permutation_chunk, permutation_z_evals := perm_comp_layout_metadata(0x3a0, vk_mptr)
+                    let permutation_z_evals_ptr := add(vk_mptr, mload(add(vk_mptr, {{ vk_const_offsets["permutation_computations_len_offset"]|hex() }})))
+                    let permutation_z_evals := mload(permutation_z_evals_ptr)
+                    // Last idx of permutation evals == permutation_evals.len() - 1
+                    let last_idx := and(permutation_z_evals, 0xFF)
+                    permutation_z_evals := shr(8, permutation_z_evals)
+                    // Num of words scaled by 0x20 that take up each permutation eval (permutation_z_eval + column evals)
+                    // first and second LSG bytes contain the number of words for all of the permutation evals except the last
+                    // the third and fourth LSG bytes contain the number of words for the last permutation eval
+                    let num_words := and(permutation_z_evals, 0xFFFFFFFF)
+                    permutation_z_evals := shr(32, permutation_z_evals)
+                    permutation_z_evals_ptr := add(permutation_z_evals_ptr, 0x20)
+                    permutation_z_evals := mload(permutation_z_evals_ptr)
                     let l_0 := mload(add(theta_mptr, 0x200))
                     {            
                         // Get the first and second LSG bytes from the first permutation_z_evals word to load in (z, _, _)
@@ -888,7 +882,7 @@ contract Halo2Verifier {
 
                     {   
                         // Load in the last permutation_z_evals word
-                        let perm_z_last_ptr := add(mul(computations_len, permutation_chunk), permutation_z_evals_ptr)
+                        let perm_z_last_ptr := add(mul(last_idx, and(num_words, 0xFFFF)), permutation_z_evals_ptr)
                         let perm_z_last := calldataload(and(mload(perm_z_last_ptr), 0xFFFF))
                         quotient_eval_numer := addmod(
                             mulmod(quotient_eval_numer, y, R), 
@@ -909,7 +903,7 @@ contract Halo2Verifier {
                         quotient_eval_numer := z_evals(
                             permutation_z_evals, 
                             // Update the chunk offset to be in bytes
-                            mul(0x20, permutation_chunk), 
+                            num_words, 
                             perm_z_last_ptr, 
                             permutation_z_evals_ptr, 
                             theta_mptr,
@@ -926,7 +920,9 @@ contract Halo2Verifier {
                     mstore(0x40, mload(add(theta_mptr, 0x1E0))) // l_blind
                     mstore(0x60, mload(theta_mptr)) // theta
                     mstore(0x80, mload(add(theta_mptr, 0x20))) // beta
-                    let evals_ptr, end_ptr := soa_layout_metadata(0x3c0, vk_mptr)
+                    let evals_ptr, end_ptr := soa_layout_metadata({{ 
+                        vk_const_offsets["lookup_computations_len_offset"]|hex()
+                    }}, vk_mptr)
                     if end_ptr {
                         // iterate through the input_tables_len
                         for { } lt(evals_ptr, end_ptr) { } {

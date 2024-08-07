@@ -554,19 +554,15 @@ impl GateDataEncoded {
 // the quotient evaluation portion of the reusable verifier.
 #[derive(Clone, PartialEq, Eq)]
 pub struct PermutationDataEncoded {
-    pub(crate) z_evals_last_idx: U256,
-    pub(crate) chunk_offset: U256,
-    pub(crate) permutation_z_evals: Vec<U256>,
-    pub(crate) column_evals: Vec<Vec<U256>>,
+    pub(crate) permutation_meta_data: U256,
+    pub(crate) permutation_data: Vec<U256>,
 }
 
 impl Default for PermutationDataEncoded {
     fn default() -> Self {
         PermutationDataEncoded {
-            z_evals_last_idx: U256::from(0),
-            chunk_offset: U256::from(0),
-            permutation_z_evals: Vec::new(),
-            column_evals: Vec::new(),
+            permutation_meta_data: U256::from(0),
+            permutation_data: Vec::new(),
         }
     }
 }
@@ -576,8 +572,7 @@ impl PermutationDataEncoded {
         if self == &Self::default() {
             0
         } else {
-            3 + self.permutation_z_evals.len()
-                + self.column_evals.iter().map(Vec::len).sum::<usize>()
+            1 + self.permutation_data.len()
         }
     }
 }
@@ -707,8 +702,7 @@ where
 
     pub fn permutation_computations(&self) -> PermutationDataEncoded {
         let Self { meta, data, .. } = self;
-        let permutation_z_evals_last_idx = 32 * (data.permutation_z_evals.len() - 1);
-        let chunk_offset = meta.permutation_chunk_len + 1;
+        let permutation_z_evals_last_idx = data.permutation_z_evals.len() - 1;
         let permutation_z_evals: Vec<U256> = data
             .permutation_z_evals
             .iter()
@@ -729,11 +723,37 @@ where
                     .collect()
             })
             .collect();
+        // num words each set of permutation data will take up (except the last one) scaled by 0x20
+        // 48 is the bit offset of the permutation_z_evals and 40 is the bit offset of each column eval.
+        let num_words = 1 + ((48 + (meta.permutation_chunk_len) * 40) / 256);
+        let perm_meta_data: U256 = {
+            let mut packed_word = U256::from(permutation_z_evals_last_idx);
+            packed_word |= U256::from(num_words * 0x20) << 8;
+            let last_num_words = 1 + ((48 + (column_evals.last().unwrap().len()) * 40) / 256);
+            packed_word |= U256::from(last_num_words * 0x20) << 24;
+            packed_word
+        };
+        let perm_data: Vec<U256> = izip!(0.., column_evals)
+            .flat_map(|(chunk_idx, column_evals)| {
+                let mut packed_words = vec![permutation_z_evals[chunk_idx]];
+                let mut last_idx = 0;
+                let mut bit_counter = 48;
+                for eval in column_evals.iter() {
+                    let next_bit_counter = bit_counter + 40;
+                    if next_bit_counter > 256 {
+                        last_idx += 1;
+                        packed_words.push(U256::from(0));
+                        bit_counter = 0;
+                    }
+                    packed_words[last_idx] |= *eval << bit_counter;
+                    bit_counter += 40;
+                }
+                packed_words
+            })
+            .collect_vec();
         PermutationDataEncoded {
-            z_evals_last_idx: U256::from(permutation_z_evals_last_idx),
-            chunk_offset: U256::from(chunk_offset),
-            permutation_z_evals,
-            column_evals,
+            permutation_meta_data: perm_meta_data,
+            permutation_data: perm_data,
         }
     }
 
