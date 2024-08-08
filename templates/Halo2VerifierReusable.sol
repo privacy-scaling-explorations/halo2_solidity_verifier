@@ -372,9 +372,8 @@ contract Halo2Verifier {
                 }
             }
 
-            function single_rot_set(r_evals_data, ptr, num_words, zeta, quotient_eval) -> ret0, ret1 {
-                let coeff := mload(and(r_evals_data, 0xFFFF))
-                r_evals_data := shr(16, r_evals_data)
+            function single_rot_set(r_evals_data, ptr, num_words, zeta, quotient_eval, coeff_ptr) -> ret0, ret1 {
+                let coeff := mload(coeff_ptr)
                 let r_eval
                 r_eval := addmod(r_eval, mulmod(coeff, calldataload(and(r_evals_data, 0xFFFF)), R), R)
                 r_evals_data := shr(16, r_evals_data)
@@ -412,14 +411,12 @@ contract Halo2Verifier {
                 ret1 := ptr
             }
 
-            function multi_rot_set(r_evals_data, ptr, num_words, rot_len, zeta) -> ret0, ret1 {
-                let coeffs_ptrs := and(r_evals_data, sub(shl(rot_len, 1), 1))
-                r_evals_data := shr(rot_len, r_evals_data)
+            function multi_rot_set(r_evals_data, ptr, num_words, rot_len, zeta, coeff_ptr) -> ret0, ret1 {
                 let r_eval := 0
                 for { let i := 0 } lt(i, num_words) { i := add(i, 1) } {
                     for { } r_evals_data { } {
-                        for { let j := 0 } lt(j, rot_len) { j := add(j, 16) } {
-                            r_eval := addmod(r_eval, mulmod(mload(and(shr(j, coeffs_ptrs), 0xFFFF)), calldataload(and(r_evals_data, 0xFFFF)), R), R)
+                        for { let j := 0 } lt(j, rot_len) { j := add(j, 0x20) } {
+                            r_eval := addmod(r_eval, mulmod(mload(add(coeff_ptr, j)), calldataload(and(r_evals_data, 0xFFFF)), R), R)
                             r_evals_data := shr(16, r_evals_data)
                         }
                         // Only on the last index do we NOT execute this if block.
@@ -434,16 +431,16 @@ contract Halo2Verifier {
                 ret1 := ptr
             }
 
-            function r_evals_computation(rot_len, r_evals_data_ptr, zeta, quotient_eval) -> ret0, ret1 {
+            function r_evals_computation(rot_len, r_evals_data_ptr, zeta, quotient_eval, coeff_ptr) -> ret0, ret1 {
                 let r_evals_data := mload(r_evals_data_ptr)
                 // number of words to encode the data needed for this set in the r_evals computation.
                 let num_words := and(r_evals_data, 0xFF)
                 r_evals_data := shr(8, r_evals_data)
                 switch rot_len
-                case 0x1 {
-                    ret0, ret1 := single_rot_set(r_evals_data, r_evals_data_ptr, num_words, zeta, quotient_eval)
+                case 0x20 {
+                    ret0, ret1 := single_rot_set(r_evals_data, r_evals_data_ptr, num_words, zeta, quotient_eval, coeff_ptr)
                 } default {
-                    ret0, ret1 := multi_rot_set(r_evals_data, r_evals_data_ptr, num_words, rot_len, zeta)
+                    ret0, ret1 := multi_rot_set(r_evals_data, r_evals_data_ptr, num_words, rot_len, zeta, coeff_ptr)
                 }
             }
 
@@ -962,7 +959,6 @@ contract Halo2Verifier {
                                 // iterate through the outer_inputs_len
                                 let last_idx := sub(outer_inputs_len, 0x20)
                                 for { let i := 0 } lt(i, outer_inputs_len) { i := add(i, 0x20) } {
-                                    // iterate through the outer_inputs_len
                                     let tmp := mload(0xa0)
                                     if eq(i, 0){
                                         tmp := mload(0xc0)
@@ -1152,9 +1148,8 @@ contract Halo2Verifier {
                     }
                     pcs_ptr := add(pcs_ptr, 0x20)
                 }
+                let coeff_ptr := 0x20
                 // r_evals_computations
-                // TODO optimizize this by hardcoding the coeff_ptr and iterating it
-                // over the coeff_len_data. Will reduce VK size. 
                 {
                     let r_evals_meta_data := mload(pcs_ptr)
                     let end_ptr_packed_lens := add(pcs_ptr, mul(0x20, and(r_evals_meta_data, 0xFF)))
@@ -1171,8 +1166,8 @@ contract Halo2Verifier {
                     let r_eval
                     for {  } lt(i, end_ptr_packed_lens) { i := add(i, 0x20) } {
                         for {  } r_evals_meta_data { } {
-                            // pass the is_single_rot_set: bool, r_evals_data word, 
-                            r_eval, pcs_ptr := r_evals_computation(and(r_evals_meta_data, 0xFF), pcs_ptr, zeta, quotient_eval)
+                            r_eval, pcs_ptr := r_evals_computation(and(r_evals_meta_data, 0xFF), pcs_ptr, zeta, quotient_eval, coeff_ptr)
+                            coeff_ptr := add(coeff_ptr, and(r_evals_meta_data, 0xFF))
                             r_evals_meta_data := shr(8, r_evals_meta_data)
                             if not_first {
                                 r_eval := mulmod(r_eval, mload(set_coeff), R)
@@ -1190,7 +1185,7 @@ contract Halo2Verifier {
                     let coeff_sums_data := mload(pcs_ptr)
                     let end_ptr_packed_lens := add(pcs_ptr, mul(0x20, and(coeff_sums_data, 0xFF)))
                     coeff_sums_data := shr(8, coeff_sums_data)
-                    let coeff_ptr := 0x20
+                    coeff_ptr := 0x20
                     let i := pcs_ptr
                     pcs_ptr := end_ptr_packed_lens
                     for {  } lt(i, end_ptr_packed_lens) { i := add(i, 0x20) } {

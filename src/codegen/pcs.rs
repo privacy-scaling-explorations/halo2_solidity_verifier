@@ -956,10 +956,10 @@ pub(crate) fn bdfg21_computations_separate(
                     *single_rot_set <= 1,
                     "Only one single rotation set in the r_evals_computations"
                 );
-                coeff_len
+                coeff_len * 32
             } else {
                 assert!(coeff_len != 0, "The number of rotations in a set is 0");
-                coeff_len * 16
+                coeff_len * 32
             }
         };
 
@@ -1038,7 +1038,6 @@ pub(crate) fn bdfg21_computations_separate(
 
         let process_single_rotation_set =
             |set: &RotationSet,
-             coeffs: &Vec<Word>,
              packed_words: &mut Vec<U256>,
              bit_counter: &mut usize,
              last_idx: &mut usize| {
@@ -1062,17 +1061,10 @@ pub(crate) fn bdfg21_computations_separate(
                     },
                 );
 
-                let coeff_ptr = coeffs[0].ptr();
                 let first_eval_ptr = eval_groups[0][0].ptr();
                 assert!(
                     eval_groups[1][0].ptr().loc() == Location::Memory,
                     "The second eval group for a single rotation set should be memory but it is not"
-                );
-
-                pack_value(
-                    &mut packed_words[0],
-                    coeff_ptr.value().as_usize(),
-                    bit_counter,
                 );
                 pack_value(
                     &mut packed_words[0],
@@ -1098,18 +1090,9 @@ pub(crate) fn bdfg21_computations_separate(
 
         let process_multiple_rotation_set =
             |set: &RotationSet,
-             coeffs: &Vec<Word>,
              packed_words: &mut Vec<U256>,
              bit_counter: &mut usize,
              last_idx: &mut usize| {
-                for coeff in coeffs.iter() {
-                    pack_value(
-                        &mut packed_words[0],
-                        coeff.ptr().value().as_usize(),
-                        bit_counter,
-                    );
-                }
-
                 for evals in set.evals().iter().rev() {
                     let offset = coeffs.len() * 16;
                     let next_bit_counter = *bit_counter + offset;
@@ -1128,8 +1111,9 @@ pub(crate) fn bdfg21_computations_separate(
                 }
             };
 
-        let r_evals_data: Vec<U256> = izip!(&sets, &coeffs)
-            .flat_map(|(set, coeffs)| {
+        let r_evals_data: Vec<U256> = sets
+            .iter()
+            .flat_map(|set| {
                 let mut packed_words = vec![U256::from(0)];
                 let mut last_idx = 0;
                 let mut bit_counter = 8;
@@ -1137,7 +1121,6 @@ pub(crate) fn bdfg21_computations_separate(
                 if set.rots().len() == 1 {
                     process_single_rotation_set(
                         set,
-                        coeffs,
                         &mut packed_words,
                         &mut bit_counter,
                         &mut last_idx,
@@ -1145,7 +1128,6 @@ pub(crate) fn bdfg21_computations_separate(
                 } else {
                     process_multiple_rotation_set(
                         set,
-                        coeffs,
                         &mut packed_words,
                         &mut bit_counter,
                         &mut last_idx,
