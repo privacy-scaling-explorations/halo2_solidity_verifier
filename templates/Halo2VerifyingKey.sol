@@ -40,18 +40,24 @@ contract Halo2VerifyingKey {
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ word|hex_padded(64) }}) // permutation_data [{{ loop.index0 }}]
             {%- endfor %}
             {%- let offset_7 = offset_6 + permutation_computations.len() %}
-            mstore({{ (32 * offset_7)|hex_padded(4) }}, {{ lookup_computations.end_ptr|hex_padded(64) }}) // end_ptr of lookup_computations
+            mstore({{ (32 * offset_7)|hex_padded(4) }}, {{ lookup_computations.meta_data|hex_padded(64) }}) // meta_data of lookup_computations
             {%- let base_offset = offset_7 + 1 %}
             {%- for lookup in lookup_computations.lookups %}
-            {%- let offset = base_offset + (loop.index0 * 3) + lookup.acc %}
+            {%- let offset = base_offset + lookup.acc %}
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ lookup.evals|hex_padded(64) }}) // lookup_evals[{{ loop.index0 }}]
+            {%- let table_inputs = lookup.table_inputs %}
+            {%- let branching_offset %}
+            {%- if let Some(table_inputs) = table_inputs %}
             {%- for table_line in lookup.table_lines %}
             mstore({{ (32 * (offset + 1 + loop.index0))|hex_padded(4) }}, {{ table_line|hex_padded(64) }}) // lookup_table_line [{{ loop.index0 }}]
             {%- endfor %}
-            mstore({{ (32 * (offset + 1 + lookup.table_lines.len()))|hex_padded(4) }}, {{ lookup.table_inputs|hex_padded(64) }}) // lookup_table_inputs [{{ loop.index0 }}]
-            mstore({{ (32 * (offset + 2 + lookup.table_lines.len()))|hex_padded(4) }}, {{ (32 * lookup.inputs.len())|hex_padded(64) }}) // outer_inputs_len[{{ loop.index0 }}]
+            mstore({{ (32 * (offset + 1 + lookup.table_lines.len()))|hex_padded(4) }}, {{ table_inputs|hex_padded(64) }}) // lookup_table_inputs [{{ loop.index0 }}]
+            {%- let branching_offset = offset + 1 + lookup.table_lines.len() %}
+            {%- else %}
+            {%- let branching_offset = offset %}
+            {%- endif %}
             {%- for input in lookup.inputs %}
-            {%- let offset = offset + loop.index0 + input.acc + 3 %}
+            {%- let offset = branching_offset + loop.index0 + input.acc %}
             {%- for expression in input.expression %}
             mstore({{ (32 * (offset + loop.index0 + 1))|hex_padded(4) }}, {{ expression|hex_padded(64) }}) // input_expression [{{ loop.index0 }}]
             {%- endfor %}

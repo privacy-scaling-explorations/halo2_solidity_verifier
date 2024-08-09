@@ -11,6 +11,7 @@ use halo2_proofs::{
 use itertools::{chain, izip, Itertools};
 use regex::Regex;
 use ruint::aliases::U256;
+use ruint::Uint;
 use std::{cell::RefCell, cmp::Ordering, collections::HashMap, iter};
 
 use super::util::{get_memory_ptr, Ptr, Word};
@@ -591,7 +592,7 @@ pub struct InputsEncoded {
 pub struct LookupEncoded {
     pub(crate) evals: U256,
     pub(crate) table_lines: Vec<U256>,
-    pub(crate) table_inputs: U256,
+    pub(crate) table_inputs: Option<U256>,
     pub(crate) acc: usize,
     pub(crate) inputs: Vec<InputsEncoded>,
 }
@@ -608,7 +609,13 @@ pub struct LookupEncoded {
 // sum of the lengths of the inputs.
 impl LookupEncoded {
     pub fn len(&self) -> usize {
-        3 + (self.inputs.len())
+        let base_len = if self.table_inputs.is_none() {
+            1 // Add 2 if table_inputs is none
+        } else {
+            2 // Add 3 otherwise
+        };
+        base_len
+            + (self.inputs.len())
             + self
                 .inputs
                 .iter()
@@ -623,14 +630,14 @@ impl LookupEncoded {
 // needed in the quotient evaluation portion of the reusable verifier.
 #[derive(Clone, PartialEq, Eq)]
 pub struct LookupsDataEncoded {
-    pub(crate) end_ptr: U256,
+    pub(crate) meta_data: U256,
     pub(crate) lookups: Vec<LookupEncoded>,
 }
 
 impl Default for LookupsDataEncoded {
     fn default() -> Self {
         LookupsDataEncoded {
-            end_ptr: U256::from(0),
+            meta_data: U256::from(0),
             lookups: Vec::new(),
         }
     }
@@ -684,6 +691,7 @@ where
         }
     }
 
+    #[allow(dead_code)]
     pub fn gate_computation_fsm_usage(&self) -> usize {
         let packed_expression_words: Vec<Vec<U256>> = self
             .cs
@@ -759,19 +767,22 @@ where
 
     #[cfg(not(feature = "mv-lookup"))]
     pub fn quotient_eval_fsm_usage(&self) -> usize {
-        let gate_computation_fsm_usage = self.gate_computation_fsm_usage();
+        unimplemented!(
+            "quotient_eval_fsm_usage function is not implemented for the non mv-lookup version of the verifier"
+        );
+        // let gate_computation_fsm_usage = self.gate_computation_fsm_usage();
 
-        let permutation_computation_fsm_usage = (self.data.permutation_z_evals.len() * 0x20) + 0x40;
+        // let permutation_computation_fsm_usage = (self.data.permutation_z_evals.len() * 0x20) + 0x40;
 
-        // TODO implement the non mv lookup version of this calculation.
-        let input_expressions_fsm_usage = 0;
+        // // TODO implement the non mv lookup version of this calculation.
+        // let input_expressions_fsm_usage = 0;
 
-        itertools::max([
-            gate_computation_fsm_usage,
-            permutation_computation_fsm_usage,
-            input_expressions_fsm_usage,
-        ])
-        .unwrap()
+        // itertools::max([
+        //     gate_computation_fsm_usage,
+        //     permutation_computation_fsm_usage,
+        //     input_expressions_fsm_usage,
+        // ])
+        // .unwrap()
     }
 
     #[cfg(feature = "mv-lookup")]
@@ -835,7 +846,7 @@ where
                 });
             assert!(inputs.len() <= 16);
             self.reset();
-            let lines_packed = self.encode_pack_expr_operations(lines);
+            let lines_packed = self.encode_pack_expr_operations(lines, 8);
             (lines_packed, inputs)
         };
 
@@ -854,7 +865,9 @@ where
                     acc
                 });
             self.reset();
-            let lines_packed = self.encode_pack_expr_operations(lines);
+            // bit offset to store the number of inputs
+            let bit_offset = if idx == 0 { 24 } else { 8 };
+            let lines_packed = self.encode_pack_expr_operations(lines, bit_offset);
             (lines_packed, inputs)
         };
 
@@ -864,10 +877,15 @@ where
             .iter()
             .map(|lookup| {
                 let inputs_iter = lookup.input_expressions().iter().enumerate();
+                // outer inputs of the MV lookup vector scaled by 0x20.
+                let outer_inputs_len = lookup.input_expressions().len() * 0x20;
                 let inputs = inputs_iter
                     .clone()
                     .map(|(idx, expressions)| {
-                        let (lines, inputs) = evaluate_inputs(idx, expressions);
+                        let (mut lines, inputs) = evaluate_inputs(idx, expressions);
+                        if idx == 0 {
+                            lines[0] |= U256::from(outer_inputs_len);
+                        }
                         (lines, inputs)
                     })
                     .collect_vec();
@@ -878,11 +896,22 @@ where
 
         let mut accumulator = 0;
 
+        let mut previous_table_lines: Option<Vec<Uint<256, 4>>> = None;
+
+        // Ensure that the number of inputs tables is less than 30 otherwise we won't be able to
+        // pack all of the shared input table expressions into the meta data.
+        assert!(inputs_tables.len() <= 30);
+
+        // meta_data will encode the subsequence_indices as a bitmask, where each byte will store
+        // whether we use the previous table lines or not. If we use the previous table lines then
+        // the byte will be 0x0 otherwise it will be 0x1.
+        let mut meta_data = U256::from(0);
         let lookups: Vec<LookupEncoded> = izip!(inputs_tables, &self.data.lookup_evals)
-            .map(|(inputs_tables, evals)| {
+            .enumerate() // Add enumeration to track indices
+            .map(|(index, (inputs_tables, evals))| {
                 let (inputs, (table_lines, table_inputs)) = inputs_tables.clone();
                 let evals = self.encode_triplet_evaluation_word(evals);
-                let table_inputs = self.encode_pack_ptrs(&table_inputs).unwrap();
+                let table_inputs = Some(self.encode_pack_ptrs(&table_inputs).unwrap());
                 let mut inner_accumulator = 0;
                 let inputs: Vec<InputsEncoded> = inputs
                     .iter()
@@ -897,37 +926,50 @@ where
                         res
                     })
                     .collect_vec();
-                let lookup_encoded = LookupEncoded {
+
+                let mut lookup_encoded = LookupEncoded {
                     evals,
                     table_lines: table_lines.clone(),
                     table_inputs,
                     inputs: inputs.clone(),
                     acc: accumulator,
                 };
-                accumulator += inputs
-                    .iter()
-                    .map(|inputs| inputs.expression.len())
-                    .sum::<usize>()
-                    + (inputs.len() * 2);
+
+                // bit offset to store the end_ptr
+                let offset = 16;
+
+                // Handle subsequence indexing logic
+                if let Some(prev_lines) = &previous_table_lines {
+                    if *prev_lines != table_lines {
+                        meta_data |= U256::from(0x1) << ((index * 8) + offset);
+                    } else {
+                        lookup_encoded.table_lines = Vec::new();
+                        lookup_encoded.table_inputs = None;
+                    }
+                } else {
+                    meta_data |= U256::from(0x1) << ((index * 8) + offset);
+                }
+
+                accumulator += lookup_encoded.len();
+
+                previous_table_lines = Some(table_lines);
                 lookup_encoded
             })
             .collect_vec();
-        let mut data = LookupsDataEncoded {
-            lookups,
-            end_ptr: U256::from(0),
-        };
-        if data.lookups.is_empty() {
-            data.end_ptr = U256::from(0x0);
-            return data;
-        }
-        data.end_ptr = U256::from((data.len() * 32) + offset);
+
+        let mut data = LookupsDataEncoded { lookups, meta_data };
+        // Insert the end_ptr to the beginning of the meta data word.
+        data.meta_data |= U256::from((data.len() * 32) + offset);
         data
     }
 
     #[cfg(not(feature = "mv-lookup"))]
     pub fn lookup_computations(&self, offset: usize) -> LookupsDataEncoded {
-        // TODO implement non mv lookup version of this
-        LookupsDataEncoded::default()
+        unimplemented!(
+            "Lookup_computations function is not implemented for the non mv-lookup version of the verifier"
+        );
+        // // TODO implement non mv lookup version of this
+        // LookupsDataEncoded::default()
     }
 
     fn eval_encoded(
@@ -996,10 +1038,10 @@ where
         Ok(packed)
     }
 
-    fn encode_pack_expr_operations(&self, exprs: Vec<U256>) -> Vec<U256> {
+    fn encode_pack_expr_operations(&self, exprs: Vec<U256>, mut bit_counter: i32) -> Vec<U256> {
         let mut packed_words: Vec<U256> = vec![U256::from(0)];
-        let mut bit_counter = 8;
         let mut last_idx = 0;
+        let initial_offset = bit_counter;
 
         for expr in exprs.iter() {
             let first_byte = expr.as_limbs()[0] & 0xFF;
@@ -1024,7 +1066,8 @@ where
         let packed_words_len = packed_words.len();
 
         // Encode the length of the exprs vec in the first word
-        packed_words[0] |= U256::from(packed_words_len);
+        let offset = if initial_offset == 24 { 16 } else { 0 };
+        packed_words[0] |= U256::from(packed_words_len) << offset;
 
         packed_words
     }
@@ -1035,7 +1078,7 @@ where
         self.reset();
         let res = result.0;
         if pack {
-            self.encode_pack_expr_operations(res)
+            self.encode_pack_expr_operations(res, 8)
         } else {
             res
         }

@@ -24,7 +24,7 @@ fn main() {
     println!("Verifier creation code size: {verifier_creation_code_size}");
 
     let mut evm = Evm::default();
-    let verifier_address = evm.create(verifier_creation_code);
+    let (verifier_address, _) = evm.create(verifier_creation_code);
 
     let deployed_verifier_solidity = verifier_solidity;
 
@@ -41,7 +41,7 @@ fn main() {
         assert_eq!(deployed_verifier_solidity, verifier_solidity);
 
         let vk_creation_code = compile_solidity(&vk_solidity);
-        let vk_address = evm.create(vk_creation_code);
+        let (vk_address, _) = evm.create(vk_creation_code);
 
         let calldata = {
             let instances = circuit.instances();

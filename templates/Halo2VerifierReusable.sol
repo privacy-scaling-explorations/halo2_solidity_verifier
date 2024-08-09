@@ -161,19 +161,6 @@ contract Halo2Verifier {
                 ret1 := mload(computations_len_ptr) // Remember this length represented in bytes
             }
 
-            // Returns the length of the SoA layout for the permutation z evaluations ptr, the permutation z evals ptr, 
-            // the permutation chunk length and the first permutation z eval. 
-            function perm_comp_layout_metadata(offset, vk_mptr) -> ret0, ret1, ret2, ret3 {
-                let computations_ptr, computations_len := soa_layout_metadata(offset, vk_mptr)
-                let permutation_z_evals_ptr := add(computations_ptr, 0x20)
-                let permutation_chunk := mload(computations_ptr) // Don't multiply by 0x20 word size here. Just encode permutation_chunk_len + 1
-                let permutation_z_evals := mload(permutation_z_evals_ptr)
-                ret0 := computations_len
-                ret1 := permutation_z_evals_ptr
-                ret2 := permutation_chunk
-                ret3 := permutation_z_evals
-            }
-
             function col_evals(z, num_words, permutation_z_evals_ptr, theta_mptr) {
                 let gamma := mload(add(theta_mptr, 0x40))
                 let beta := mload(add(theta_mptr, 0x20))
@@ -278,11 +265,11 @@ contract Halo2Verifier {
 
             function expression_evals_packed(fsmp, code_ptr, expressions_word) -> ret0, ret1, ret2 {
                 // Load in the least significant byte of the `expressions_word` word to get the total number of words we will need to load in.
-                let num_words := add(mul(0x20, and(expressions_word, 0xFF)), 0x20)
+                let num_words_shift_up_one := add(mul(0x20, and(expressions_word, 0xFF)), 0x20)
                 // start of the expression encodings
                 expressions_word := shr(8, expressions_word)
                 let acc 
-                for { let i := 0x20 } lt(i, num_words) { i := add(i, 0x20) } {
+                for { let i := 0x20 } lt(i, num_words_shift_up_one) { i := add(i, 0x20) } {
                     for {  } expressions_word { } {
                         expressions_word := expression_operations(expressions_word, fsmp, acc)
                         acc := add(acc, 0x20)
@@ -917,10 +904,15 @@ contract Halo2Verifier {
                     mstore(0x40, mload(add(theta_mptr, 0x1E0))) // l_blind
                     mstore(0x60, mload(theta_mptr)) // theta
                     mstore(0x80, mload(add(theta_mptr, 0x20))) // beta
-                    let evals_ptr, end_ptr := soa_layout_metadata({{ 
+                    let evals_ptr, lookup_meta_data := soa_layout_metadata({{ 
                         vk_const_offsets["lookup_computations_len_offset"]|hex()
                     }}, vk_mptr)
-                    if end_ptr {
+                    // lookup meta data contains 32 byte flags for indicating if we need to do a lookup table lines 
+                    // expression evaluation or we can use the previous one cached in the table var. 
+                    if lookup_meta_data {
+                        let table
+                        let end_ptr := and(lookup_meta_data, 0xFFFF)
+                        lookup_meta_data := shr(16, lookup_meta_data)
                         // iterate through the input_tables_len
                         for { } lt(evals_ptr, end_ptr) { } {
                             let evals := mload(evals_ptr)
@@ -935,21 +927,27 @@ contract Halo2Verifier {
                                 mulmod(mload(0x00), calldataload(phi), R), 
                                 R
                             )
-                            let table
-                            // load in the table_lines_len from the evals_ptr
+                            // load in the lookup_table_lines from the evals_ptr
                             evals_ptr := add(evals_ptr, 0x20)
-                            evals_ptr, table := lookup_expr_evals_packed(0xa0, evals_ptr, mload(evals_ptr), mload(0x60), mload(0x80))
-                            evals_ptr := add(evals_ptr, 0x20)
-                            let outer_inputs_len := mload(evals_ptr)
-                            for { let j := 0xa0 } lt(j, add(outer_inputs_len, 0xa0)) { j := add(j, 0x20) } {
+                            // Due to the fact that lookups share the previous table, we can cache the previous table.
+                            if and(lookup_meta_data, 0xFF) {
+                                evals_ptr, table := lookup_expr_evals_packed(0xa0, evals_ptr, mload(evals_ptr), mload(0x60), mload(0x80))
                                 evals_ptr := add(evals_ptr, 0x20)
+                            }
+                            lookup_meta_data := shr(8, lookup_meta_data)
+                            let input_expression := mload(evals_ptr)
+                            // outer inputs len, stored in the first input expression word, shifted up by the free static memory offset of 0xa0
+                            let outer_inputs_len := and(input_expression, 0xFFFF)
+                            input_expression := shr(16, input_expression)
+                            for { let j := 0xa0 } lt(j, add(outer_inputs_len, 0xa0)) { j := add(j, 0x20) } {
                                 // call the expression_evals function to evaluate the input_lines
                                 let ident
-                                evals_ptr, ident := lookup_expr_evals_packed(j, evals_ptr, mload(evals_ptr), mload(0x60), mload(0x80))
+                                evals_ptr, ident := lookup_expr_evals_packed(j, evals_ptr, input_expression, mload(0x60), mload(0x80))
+                                evals_ptr := add(evals_ptr, 0x20)
+                                input_expression := mload(evals_ptr)
                                 // store ident in free static memory
                                 mstore(j, ident)
                             }
-                            evals_ptr := add(evals_ptr, 0x20)
                             let lhs
                             let rhs
                             switch eq(outer_inputs_len, 0x20)

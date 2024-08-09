@@ -167,15 +167,15 @@ pub(crate) mod test {
         ///
         /// # Panics
         /// Panics if execution reverts or halts unexpectedly.
-        pub fn create(&mut self, bytecode: Vec<u8>) -> Address {
-            let (_, output) = self.transact_success_or_panic(TxEnv {
+        pub fn create(&mut self, bytecode: Vec<u8>) -> (Address, u64) {
+            let (gas_used, output) = self.transact_success_or_panic(TxEnv {
                 gas_limit: u64::MAX,
                 transact_to: TransactTo::Create(CreateScheme::Create),
                 data: bytecode.into(),
                 ..Default::default()
             });
             match output {
-                Output::Create(_, Some(address)) => address,
+                Output::Create(_, Some(address)) => (address, gas_used),
                 _ => unreachable!(),
             }
         }
