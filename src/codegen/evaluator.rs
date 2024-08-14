@@ -9,15 +9,14 @@ use halo2_proofs::{
     },
 };
 use itertools::{chain, izip, Itertools};
-use regex::Regex;
 use ruint::aliases::U256;
 use ruint::Uint;
 use std::{cell::RefCell, cmp::Ordering, collections::HashMap, iter};
 
-use super::util::{get_memory_ptr, Ptr, Word};
+use super::util::{Ptr, Word};
 
 #[derive(Debug)]
-pub(crate) struct Evaluator<'a, F: PrimeField> {
+pub(crate) struct EvaluatorStatic<'a, F: PrimeField> {
     cs: &'a ConstraintSystem<F>,
     meta: &'a ConstraintSystemMeta,
     data: &'a Data,
@@ -25,7 +24,7 @@ pub(crate) struct Evaluator<'a, F: PrimeField> {
     var_cache: RefCell<HashMap<String, String>>,
 }
 
-impl<'a, F> Evaluator<'a, F>
+impl<'a, F> EvaluatorStatic<'a, F>
 where
     F: PrimeField<Repr = [u8; 0x20]>,
 {
@@ -52,20 +51,13 @@ where
             .collect()
     }
 
-    pub fn permutation_computations(&self, separate: bool) -> Vec<(Vec<String>, String)> {
+    pub fn permutation_computations(&self) -> Vec<(Vec<String>, String)> {
         let Self { meta, data, .. } = self;
         let last_chunk_idx = meta.num_permutation_zs - 1;
-        let theta_mptr = "theta_mptr";
-        let beta = get_memory_ptr(theta_mptr, 1, &separate);
-        let gamma = get_memory_ptr(theta_mptr, 2, &separate);
-        let x_mptr = get_memory_ptr(theta_mptr, 4, &separate);
-        let l_last = get_memory_ptr(theta_mptr, 14, &separate);
-        let l_blind = get_memory_ptr(theta_mptr, 15, &separate);
-        let l_0 = get_memory_ptr(theta_mptr, 16, &separate);
         chain![
             data.permutation_z_evals.first().map(|(z, _, _)| {
                 vec![
-                    format!("let l_0 := mload({l_0})"),
+                    format!("let l_0 := mload(L_0_MPTR)"),
                     format!("let eval := addmod(l_0, sub(R, mulmod(l_0, {z}, R)), R)"),
                 ]
             }),
@@ -73,13 +65,13 @@ where
                 let item = "addmod(mulmod(perm_z_last, perm_z_last, R), sub(R, perm_z_last), R)";
                 vec![
                     format!("let perm_z_last := {z}"),
-                    format!("let eval := mulmod(mload({l_last}), {item}, R)"),
+                    format!("let eval := mulmod(mload(L_LAST_MPTR), {item}, R)"),
                 ]
             }),
             data.permutation_z_evals.iter().tuple_windows().map(
                 |((_, _, z_i_last), (z_j, _, _))| {
                     let item = format!("addmod({z_j}, sub(R, {z_i_last}), R)");
-                    vec![format!("let eval := mulmod(mload({l_0}), {item}, R)")]
+                    vec![format!("let eval := mulmod(mload(L_0_MPTR), {item}, R)")]
                 }
             ),
             izip!(
@@ -91,8 +83,8 @@ where
                 let last_column_idx = columns.len() - 1;
                 chain![
                     [
-                        format!("let gamma := mload({})", gamma),
-                        format!("let beta := mload({})", beta),
+                        format!("let gamma := mload({})", "GAMMA_MPTR"),
+                        format!("let beta := mload({})", "BETA_MPTR"),
                         format!("let lhs := {}", evals.1),
                         format!("let rhs := {}", evals.0),
                     ],
@@ -105,7 +97,7 @@ where
                         )]
                     }),
                     (chunk_idx == 0)
-                        .then(|| format!("mstore(0x00, mulmod(beta, mload({}), R))", x_mptr)),
+                        .then(|| format!("mstore(0x00, mulmod(beta, mload({}), R))", "X_MPTR")),
                     columns.iter().enumerate().flat_map(|(idx, column)| {
                         let eval = self.eval(*column.column_type(), column.index(), 0);
                         let item = format!("addmod(addmod({eval}, mload(0x00), R), gamma, R)");
@@ -116,7 +108,7 @@ where
                         ]
                     }),
                     {
-                        let item = format!("addmod(mload({l_last}), mload({l_blind}), R)");
+                        let item = format!("addmod(mload(L_LAST_MPTR), mload(L_BLIND_MPTR), R)");
                         let item = format!("sub(R, mulmod(left_sub_right, {item}, R))");
                         [
                             format!("let left_sub_right := addmod(lhs, sub(R, rhs), R)"),
@@ -132,11 +124,7 @@ where
     }
 
     #[cfg(feature = "mv-lookup")]
-    pub fn lookup_computations(
-        &self,
-        vk_lookup_const_table: Option<HashMap<ruint::Uint<256, 4>, super::util::Ptr>>,
-        separate: bool,
-    ) -> Vec<(Vec<String>, String)> {
+    pub fn lookup_computations(&self) -> Vec<(Vec<String>, String)> {
         let evaluate = |expressions: &Vec<_>| {
             // println!("expressions: {:?}", expressions);
             let (lines, inputs) = expressions
@@ -162,16 +150,6 @@ where
                 (inputs, table)
             })
             .collect_vec();
-        let lookup_const_table = if let Some(vk_lookup_const_table) = vk_lookup_const_table {
-            // map all the keys to u256_string
-            let vk_lookup_const_table: HashMap<String, super::util::Ptr> = vk_lookup_const_table
-                .iter()
-                .map(|(key, value)| (u256_string(*key), *value))
-                .collect();
-            Some(vk_lookup_const_table)
-        } else {
-            None
-        };
 
         let vec = izip!(inputs_tables, &self.data.lookup_evals)
             .flat_map(|(inputs_tables, evals)| {
@@ -179,31 +157,19 @@ where
                 let num_inputs = inputs.len();
                 let (table_0, rest_tables) = tables.split_first().unwrap();
                 let (phi, phi_next, m) = evals;
-                // if separate then use the theta_mptr on set on the stack
-                // otherwise use the solidity constant
-                let theta_mptr = "theta_mptr";
-                let theta = get_memory_ptr(theta_mptr, 0, &separate);
-                // For all the the other pointers offset from the theta_mptr perfrom relavant add operation
-                let beta = get_memory_ptr(theta_mptr, 1, &separate);
-                let l_last = get_memory_ptr(theta_mptr, 14, &separate);
-
-                let l_blind = get_memory_ptr(theta_mptr, 15, &separate);
-
-                let l_0 = get_memory_ptr(theta_mptr, 16, &separate);
-                // print line the input tables
                 [
                     vec![
-                        format!("let l_0 := mload({l_0})"),
+                        format!("let l_0 := mload(L_0_MPTR)"),
                         format!("let eval := mulmod(l_0, {phi}, R)"),
                     ],
                     vec![
-                        format!("let l_last := mload({l_last})"),
+                        format!("let l_last := mload(L_LAST_MPTR)"),
                         format!("let eval := mulmod(l_last, {phi}, R)"),
                     ],
                     chain![
                         [
-                            format!("let theta := mload({})", theta).as_str(),
-                            format!("let beta := mload({})", beta).as_str(),
+                            format!("let theta := mload({})", "THETA_MPTR").as_str(),
+                            format!("let beta := mload({})", "BETA_MPTR").as_str(),
                             "let table"
                         ]
                         .map(str::to_string),
@@ -218,35 +184,6 @@ where
                         izip!(0.., inputs.into_iter()).flat_map(|(idx, (input_lines, inputs))| {
                             let (input_0, rest_inputs) = inputs.split_first().unwrap();
                             let ident = format!("input_{idx}");
-                            let hex_regex = Regex::new(r":= (0x[0-9a-fA-F]+)").unwrap();
-                            // use regex to replace hex constants with mload format
-                            let input_lines =
-                                if let Some(lookup_const_table) = lookup_const_table.clone() {
-                                    // println!("lookup_const_table: {:?}", lookup_const_table);
-                                    let modified_input_lines: Vec<String> = input_lines
-                                        .into_iter()
-                                        .map(|line| {
-                                            hex_regex
-                                                .replace_all(&line, |caps: &regex::Captures| {
-                                                    if let Some(hex_str) = caps.get(1) {
-                                                        if let Some(ptr) =
-                                                            lookup_const_table.get(hex_str.as_str())
-                                                        {
-                                                            format!(":= mload({ptr})")
-                                                        } else {
-                                                            hex_str.as_str().to_string()
-                                                        }
-                                                    } else {
-                                                        line.to_string()
-                                                    }
-                                                })
-                                                .to_string()
-                                        })
-                                        .collect();
-                                    modified_input_lines
-                                } else {
-                                    input_lines
-                                };
                             chain![
                                 [format!("let {ident}")],
                                 code_block::<1, false>(chain![
@@ -294,7 +231,7 @@ where
                         ]),
                         {
                             let l_inactive =
-                                format!("addmod(mload({l_blind}), mload({l_last}), R)");
+                                format!("addmod(mload(L_BLIND_MPTR), mload(L_LAST_MPTR), R)");
                             let l_active = format!("addmod(1, sub(R, {l_inactive}), R)");
                             [format!(
                                 "let eval := mulmod({l_active}, addmod(lhs, sub(R, rhs), R), R)"
@@ -310,11 +247,7 @@ where
     }
 
     #[cfg(not(feature = "mv-lookup"))]
-    pub fn lookup_computations(
-        &self,
-        _vk_lookup_const_table: Option<HashMap<ruint::Uint<256, 4>, super::util::Ptr>>,
-        _separate: bool,
-    ) -> Vec<(Vec<String>, String)> {
+    pub fn lookup_computations(&self) -> Vec<(Vec<String>, String)> {
         let input_tables = self
             .cs
             .lookups()
@@ -505,23 +438,12 @@ where
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct EvaluatorVK<'a, F: PrimeField> {
-    cs: &'a ConstraintSystem<F>,
-    #[allow(dead_code)]
-    meta: &'a ConstraintSystemMeta,
-    data: &'a Data,
-    static_mem_ptr: RefCell<usize>,
-    encoded_var_cache: RefCell<HashMap<U256, U256>>,
-    const_cache: RefCell<HashMap<ruint::Uint<256, 4>, Ptr>>,
-}
-
-// // Define an enum which catagorizes the operand memory location:
-// // calldata_mptr
-// // constant_mptr
-// // instance_mptr
-// // chllenge_mptr
-// // static_memory_ptr
+// Define an enum which catagorizes the operand memory location:
+// calldata_mptr
+// constant_mptr
+// instance_mptr
+// chllenge_mptr
+// static_memory_ptr
 #[derive(Clone, PartialEq, Eq)]
 pub enum OperandMem {
     Calldata,
@@ -653,7 +575,17 @@ impl LookupsDataEncoded {
     }
 }
 
-impl<'a, F> EvaluatorVK<'a, F>
+#[derive(Debug)]
+pub(crate) struct EvaluatorDynamic<'a, F: PrimeField> {
+    cs: &'a ConstraintSystem<F>,
+    meta: &'a ConstraintSystemMeta,
+    data: &'a Data,
+    static_mem_ptr: RefCell<usize>,
+    encoded_var_cache: RefCell<HashMap<U256, U256>>,
+    const_cache: RefCell<HashMap<ruint::Uint<256, 4>, Ptr>>,
+}
+
+impl<'a, F> EvaluatorDynamic<'a, F>
 where
     F: PrimeField<Repr = [u8; 0x20]>,
 {
@@ -692,7 +624,7 @@ where
     }
 
     #[allow(dead_code)]
-    pub fn gate_computation_fsm_usage(&self) -> usize {
+    fn gate_computation_fsm_usage(&self) -> usize {
         let packed_expression_words: Vec<Vec<U256>> = self
             .cs
             .gates()
@@ -1106,7 +1038,8 @@ where
             },
             &|_| {
                 self.init_encoded_var(
-                    U256::from(self.data.instance_eval.ptr().value().as_usize()),
+                    // instance eval ptr located 17 words after the theta mptr
+                    U256::from((self.data.theta_mptr + 17).value().as_usize()),
                     OperandMem::Instance,
                 )
             },

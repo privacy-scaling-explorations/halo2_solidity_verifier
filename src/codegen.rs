@@ -1,10 +1,13 @@
 use crate::codegen::{
-    evaluator::{Evaluator, EvaluatorVK},
+    evaluator::{EvaluatorDynamic, EvaluatorStatic},
     pcs::{
-        bdfg21_computations, queries, rotation_sets,
+        bdfg21_computations_dynamic, bdfg21_computations_static, queries, rotation_sets,
         BatchOpenScheme::{Bdfg21, Gwc19},
     },
-    template::{Halo2Verifier, Halo2VerifyingKey},
+    template::{
+        Halo2Verifier, Halo2VerifierReusable, Halo2VerifyingArtifact, Halo2VerifyingKey,
+        VerifyingCache,
+    },
     util::{
         expression_consts, fr_to_u256, g1_to_u256s, g2_to_u256s, ConstraintSystemMeta, Data, Ptr,
     },
@@ -15,13 +18,11 @@ use halo2_proofs::{
     poly::{commitment::ParamsProver, kzg::commitment::ParamsKZG, Rotation},
 };
 use itertools::{chain, Itertools};
-use pcs::bdfg21_computations_separate;
 use ruint::aliases::U256;
 use std::{
     collections::HashMap,
     fmt::{self, Debug},
 };
-use template::{Halo2VerifierReusable, Halo2VerifyingArtifact, VerifyingCache};
 
 mod evaluator;
 mod pcs;
@@ -151,7 +152,7 @@ impl<'a> SolidityGenerator<'a> {
         Ok(verifier_output)
     }
 
-    /// Render `Halo2Verifier.sol` and `Halo2VerifyingKey.sol` into writers.
+    /// Render `Halo2VerifierReusable.sol` and `Halo2VerifyingArtifact.sol` into writers.
     pub fn render_separately_into(
         &self,
         verifier_writer: &mut impl fmt::Write,
@@ -162,7 +163,7 @@ impl<'a> SolidityGenerator<'a> {
         Ok(())
     }
 
-    /// Render `Halo2Verifier.sol` and `Halo2VerifyingKey.sol` and return them as `String`.
+    /// Render `Halo2VerifierReusable.sol` and `Halo2VerifyingArtifact.sol` and return them as `String`.
     pub fn render_separately(&self) -> Result<(String, String), fmt::Error> {
         let mut verifier_output = String::new();
         let mut vk_output = String::new();
@@ -345,7 +346,6 @@ impl<'a> SolidityGenerator<'a> {
             &VerifyingCache::Key(&dummy_vk),
             Ptr::memory(vk_mptr_mock),
             Ptr::calldata(0x84),
-            true,
         );
 
         let mut vk_lookup_const_table_dummy: HashMap<ruint::Uint<256, 4>, Ptr> = HashMap::new();
@@ -361,7 +361,7 @@ impl<'a> SolidityGenerator<'a> {
             vk_lookup_const_table_dummy.insert(const_expressions[idx], mptr);
         });
 
-        let evaluator_dummy = EvaluatorVK::new(
+        let evaluator_dummy = EvaluatorDynamic::new(
             self.vk.cs(),
             &self.meta,
             &dummy_data,
@@ -374,7 +374,7 @@ impl<'a> SolidityGenerator<'a> {
         let lookup_computations_dummy = evaluator_dummy.lookup_computations(0);
         // Same for the pcs computations
         let pcs_computations_dummy = match self.scheme {
-            Bdfg21 => bdfg21_computations_separate(&self.meta, &dummy_data),
+            Bdfg21 => bdfg21_computations_dynamic(&self.meta, &dummy_data),
             Gwc19 => unimplemented!(),
         };
 
@@ -505,7 +505,6 @@ impl<'a> SolidityGenerator<'a> {
             &VerifyingCache::Artifact(&vk),
             Ptr::memory(vk_mptr),
             Ptr::calldata(0x84),
-            true,
         );
 
         // Regenerate the gate computations with the correct offsets.
@@ -527,7 +526,8 @@ impl<'a> SolidityGenerator<'a> {
             });
 
         // Now we initalize the real evaluator_vk which will contain the correct offsets in the vk_lookup_const_table.
-        let evaluator = EvaluatorVK::new(self.vk.cs(), &self.meta, &data, vk_lookup_const_table);
+        let evaluator =
+            EvaluatorDynamic::new(self.vk.cs(), &self.meta, &data, vk_lookup_const_table);
 
         // NOTE: We don't need to replace the gate_computations_total_length since we are only potentially modifying the offsets for each constant mload operation.
         vk.gate_computations = evaluator.gate_computations();
@@ -545,19 +545,13 @@ impl<'a> SolidityGenerator<'a> {
         let vk = self.generate_vk(false);
         let vk_m = self.estimate_static_working_memory_size(&VerifyingCache::Key(&vk), proof_cptr);
         let vk_mptr = Ptr::memory(vk_m);
-        let data = Data::new(
-            &self.meta,
-            &VerifyingCache::Key(&vk),
-            vk_mptr,
-            proof_cptr,
-            false,
-        );
+        let data = Data::new(&self.meta, &VerifyingCache::Key(&vk), vk_mptr, proof_cptr);
 
-        let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
+        let evaluator = EvaluatorStatic::new(self.vk.cs(), &self.meta, &data);
         let quotient_eval_numer_computations: Vec<Vec<String>> = chain![
             evaluator.gate_computations(),
-            evaluator.permutation_computations(false),
-            evaluator.lookup_computations(None, false),
+            evaluator.permutation_computations(),
+            evaluator.lookup_computations(),
         ]
         .enumerate()
         .map(|(idx, (mut lines, var))| {
@@ -574,7 +568,7 @@ impl<'a> SolidityGenerator<'a> {
         .collect();
 
         let pcs_computations = match self.scheme {
-            Bdfg21 => bdfg21_computations(&self.meta, &data, false),
+            Bdfg21 => bdfg21_computations_static(&self.meta, &data),
             Gwc19 => unimplemented!(),
         };
 
@@ -613,7 +607,7 @@ impl<'a> SolidityGenerator<'a> {
 
     fn estimate_static_working_memory_size(&self, vk: &VerifyingCache, proof_cptr: Ptr) -> usize {
         let mock_vk_mptr = Ptr::memory(0x100000);
-        let mock = Data::new(&self.meta, vk, mock_vk_mptr, proof_cptr, false);
+        let mock = Data::new(&self.meta, vk, mock_vk_mptr, proof_cptr);
         let pcs_computation = match self.scheme {
             Bdfg21 => {
                 let (superset, sets) = rotation_sets(&queries(&self.meta, &mock));
@@ -652,8 +646,12 @@ impl<'a> SolidityGenerator<'a> {
                     let mptr = Ptr::memory(mptr);
                     vk_lookup_const_table_dummy.insert(const_expressions[idx], mptr);
                 });
-                let evaluator =
-                    EvaluatorVK::new(self.vk.cs(), &self.meta, &mock, vk_lookup_const_table_dummy);
+                let evaluator = EvaluatorDynamic::new(
+                    self.vk.cs(),
+                    &self.meta,
+                    &mock,
+                    vk_lookup_const_table_dummy,
+                );
 
                 let expression_eval_computations = evaluator.quotient_eval_fsm_usage();
                 itertools::max([fsm_usage, expression_eval_computations]).unwrap()

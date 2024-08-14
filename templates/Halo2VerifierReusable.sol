@@ -2,7 +2,7 @@
 
 pragma solidity ^0.8.0;
 
-contract Halo2Verifier {
+contract Halo2VerifierReusable {
     uint256 internal constant    PROOF_LEN_CPTR = 0x64;
     uint256 internal constant    PROOF_CPTR = 0x84;
     uint256 internal constant    Q = 21888242871839275222246405745257275088696311157297823662689037894645226208583;
@@ -851,8 +851,8 @@ contract Halo2Verifier {
                     let last_idx := and(permutation_z_evals, 0xFF)
                     permutation_z_evals := shr(8, permutation_z_evals)
                     // Num of words scaled by 0x20 that take up each permutation eval (permutation_z_eval + column evals)
-                    // first and second LSG bytes contain the number of words for all of the permutation evals except the last
-                    // the third and fourth LSG bytes contain the number of words for the last permutation eval
+                    // first and second LSG bytes contain the number of words for all of the permutation evals except the last.
+                    // The third and fourth LSG bytes contain the number of words for the last permutation eval
                     let num_words := and(permutation_z_evals, 0xFFFFFFFF)
                     permutation_z_evals := shr(32, permutation_z_evals)
                     permutation_z_evals_ptr := add(permutation_z_evals_ptr, 0x20)
@@ -886,7 +886,6 @@ contract Halo2Verifier {
 
                         quotient_eval_numer := z_evals(
                             permutation_z_evals, 
-                            // Update the chunk offset to be in bytes
                             num_words, 
                             perm_z_last_ptr, 
                             permutation_z_evals_ptr, 

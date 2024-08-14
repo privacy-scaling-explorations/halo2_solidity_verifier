@@ -1,8 +1,6 @@
 #![allow(clippy::useless_format)]
 
-use crate::codegen::util::{
-    for_loop, get_memory_ptr, ConstraintSystemMeta, Data, EcPoint, Location, Ptr, Word,
-};
+use crate::codegen::util::{for_loop, ConstraintSystemMeta, Data, EcPoint, Location, Ptr, Word};
 use itertools::{chain, izip, Itertools};
 use ruint::aliases::U256;
 use std::collections::{BTreeMap, BTreeSet};
@@ -206,10 +204,9 @@ pub(crate) fn rotation_sets(queries: &[Query]) -> (BTreeSet<i32>, Vec<RotationSe
     (superset, sets)
 }
 
-pub(crate) fn bdfg21_computations(
+pub(crate) fn bdfg21_computations_static(
     meta: &ConstraintSystemMeta,
     data: &Data,
-    separate: bool,
 ) -> Vec<Vec<String>> {
     let queries = queries(meta, data);
     let (superset, sets) = rotation_sets(&queries);
@@ -251,28 +248,11 @@ pub(crate) fn bdfg21_computations(
     let r_evals = Word::range(r_eval_mptr).take(sets.len()).collect_vec();
     let sums = Word::range(sum_mptr).take(sets.len()).collect_vec();
 
-    // if separate then we load in omega and omega_inv from vk_mptr + hardcoded offset.
-    // Otherwise we load in omega and omega_inv from the solidity constants.
-
-    let vk_mptr = "vk_mptr";
-    let theta_mptr = "theta_mptr";
-
-    let omega = get_memory_ptr(vk_mptr, 10, &separate);
-
-    let omega_inv = get_memory_ptr(vk_mptr, 11, &separate);
-
-    let g1_x = get_memory_ptr(vk_mptr, 17, &separate);
-
-    let g1_y = get_memory_ptr(vk_mptr, 18, &separate);
-
-    let x = get_memory_ptr(theta_mptr, 4, &separate);
-
-    let zeta = get_memory_ptr(theta_mptr, 5, &separate);
     let point_computations = chain![
         [
-            format!("let x := mload({})", x).as_str(),
-            format!("let omega := mload({})", omega).as_str(),
-            format!("let omega_inv := mload({})", omega_inv).as_str(),
+            format!("let x := mload({})", "X_MPTR").as_str(),
+            format!("let omega := mload({})", "OMEGA_MPTR").as_str(),
+            format!("let omega_inv := mload({})", "OMEGA_INV_MPTR").as_str(),
             "let x_pow_of_omega := mulmod(x, omega, R)"
         ]
         .map(str::to_string),
@@ -303,9 +283,8 @@ pub(crate) fn bdfg21_computations(
     .collect_vec();
     // print the point computations
     // println!("{:?}", point_computations);
-    let mu = get_memory_ptr(theta_mptr, 7, &separate);
     let vanishing_computations = chain![
-        [format!("let mu := mload({mu})").to_string()],
+        [format!("let mu := mload(MU_MPTR)").to_string()],
         {
             let mptr = mu_minus_points.first_key_value().unwrap().1.ptr();
             let mptr_end = mptr + mu_minus_points.len();
@@ -418,7 +397,7 @@ pub(crate) fn bdfg21_computations(
             chain![
                 is_single_rot_set.then(|| format!("let coeff := {}", coeffs[0])),
                 [
-                    format!("let zeta := mload({})", zeta).as_str(),
+                    format!("let zeta := mload({})", "ZETA_MPTR").as_str(),
                     "let r_eval := 0"
                 ]
                 .map(str::to_string),
@@ -504,14 +483,6 @@ pub(crate) fn bdfg21_computations(
         ]
         .collect_vec()
     });
-
-    let nu = get_memory_ptr(theta_mptr, 6, &separate);
-    let mu = get_memory_ptr(theta_mptr, 7, &separate);
-    let r_eval = get_memory_ptr(theta_mptr, 21, &separate);
-    let pairing_lhs_x = get_memory_ptr(theta_mptr, 22, &separate);
-    let pairing_lhs_y = get_memory_ptr(theta_mptr, 23, &separate);
-    let pairing_rhs_x = get_memory_ptr(theta_mptr, 24, &separate);
-    let pairing_rhs_y = get_memory_ptr(theta_mptr, 25, &separate);
     let r_eval_computations = chain![
         for_loop(
             [
@@ -544,16 +515,16 @@ pub(crate) fn bdfg21_computations(
             ]
             .map(str::to_string),
             [
-                format!("r_eval := mulmod(r_eval, mload({nu}), R)").as_str(),
+                format!("r_eval := mulmod(r_eval, mload(NU_MPTR), R)").as_str(),
                 "r_eval := addmod(r_eval, mulmod(mload(sum_inv_mptr), mload(r_eval_mptr), R), R)"
             ]
             .map(str::to_string),
         ),
-        [format!("mstore({r_eval}, r_eval)")],
+        [format!("mstore(R_EVAL_MPTR, r_eval)")],
     ]
     .collect_vec();
     let pairing_input_computations = chain![
-        [format!("let nu := mload({nu})").to_string()],
+        [format!("let nu := mload(NU_MPTR)").to_string()],
         izip!(0.., &sets, &diffs).flat_map(|(set_idx, set, set_coeff)| {
             let is_first_set = set_idx == 0;
             let is_last_set = set_idx == sets.len() - 1;
@@ -582,7 +553,6 @@ pub(crate) fn bdfg21_computations(
                     }
                 },
             );
-            let zeta_mptr = &zeta;
             chain![
                 set.comms()
                     .last()
@@ -601,7 +571,7 @@ pub(crate) fn bdfg21_computations(
                             .flat_map(|comm| {
                                 let (x, y) = (comm.x(), comm.y());
                                 [
-                                    format!("success := {ec_mul}(success, mload({zeta_mptr}))"),
+                                    format!("success := {ec_mul}(success, mload(ZETA_MPTR))"),
                                     format!("success := {ec_add}(success, {x}, {y})"),
                                 ]
                             })
@@ -619,7 +589,7 @@ pub(crate) fn bdfg21_computations(
                             "lt(mptr_end, mptr)",
                             ["mptr := sub(mptr, 0x40)".to_string()],
                             [
-                                format!("success := {ec_mul}(success, mload({zeta_mptr}))"),
+                                format!("success := {ec_mul}(success, mload(ZETA_MPTR))"),
                                 format!("success := {ec_add}(success, {x}, {y})"),
                             ],
                         )
@@ -633,7 +603,7 @@ pub(crate) fn bdfg21_computations(
                                 format!("success := ec_mul_tmp(success, {scalar})"),
                                 format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
                             ],
-                            (!is_last_set).then(|| format!("nu := mulmod(nu, mload({nu}), R)"))
+                            (!is_last_set).then(|| format!("nu := mulmod(nu, mload(NU_MPTR), R)"))
                         ]
                     })
                     .into_iter()
@@ -642,9 +612,9 @@ pub(crate) fn bdfg21_computations(
             .collect_vec()
         }),
         [
-            format!("mstore(0x80, mload({}))", g1_x),
-            format!("mstore(0xa0, mload({}))", g1_y),
-            format!("success := ec_mul_tmp(success, sub(R, mload({r_eval})))"),
+            format!("mstore(0x80, mload({}))", "G1_X_MPTR"),
+            format!("mstore(0xa0, mload({}))", "G1_Y_MPTR"),
+            format!("success := ec_mul_tmp(success, sub(R, mload(R_EVAL_MPTR)))"),
             format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
             format!("mstore(0x80, {})", w.x()),
             format!("mstore(0xa0, {})", w.y()),
@@ -652,12 +622,12 @@ pub(crate) fn bdfg21_computations(
             format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
             format!("mstore(0x80, {})", w_prime.x()),
             format!("mstore(0xa0, {})", w_prime.y()),
-            format!("success := ec_mul_tmp(success, mload({mu}))"),
+            format!("success := ec_mul_tmp(success, mload(MU_MPTR))"),
             format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
-            format!("mstore({pairing_lhs_x}, mload(0x00))"),
-            format!("mstore({pairing_lhs_y}, mload(0x20))"),
-            format!("mstore({pairing_rhs_x}, {})", w_prime.x()),
-            format!("mstore({pairing_rhs_y}, {})", w_prime.y()),
+            format!("mstore(PAIRING_LHS_X_MPTR, mload(0x00))"),
+            format!("mstore(PAIRING_LHS_Y_MPTR, mload(0x20))"),
+            format!("mstore(PAIRING_RHS_X_MPTR, {})", w_prime.x()),
+            format!("mstore(PAIRING_RHS_Y_MPTR, {})", w_prime.y()),
         ],
     ]
     .collect_vec();
@@ -701,7 +671,7 @@ impl PcsDataEncoded {
     }
 }
 
-pub(crate) fn bdfg21_computations_separate(
+pub(crate) fn bdfg21_computations_dynamic(
     meta: &ConstraintSystemMeta,
     data: &Data,
 ) -> PcsDataEncoded {
