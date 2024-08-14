@@ -1,7 +1,4 @@
-use crate::codegen::{
-    template::Halo2VerifyingKey,
-    BatchOpenScheme::{self, Bdfg21, Gwc19},
-};
+use crate::codegen::BatchOpenScheme::{self, Bdfg21, Gwc19};
 use halo2_proofs::{
     halo2curves::{bn256, ff::PrimeField, CurveAffine},
     plonk::{Any, Column, ConstraintSystem, Expression, Gate},
@@ -14,6 +11,8 @@ use std::{
     fmt::{self, Display, Formatter},
     ops::{Add, Sub},
 };
+
+use super::template::VerifyingCache;
 
 #[derive(Debug)]
 #[cfg(feature = "mv-lookup")]
@@ -391,21 +390,14 @@ pub(crate) struct Data {
 impl Data {
     pub(crate) fn new(
         meta: &ConstraintSystemMeta,
-        vk: &Halo2VerifyingKey,
+        vk: &VerifyingCache,
         vk_mptr: Ptr,
         proof_cptr: Ptr,
         separate: bool,
     ) -> Self {
-        let fixed_comm_mptr = vk_mptr + vk.constants.len();
-        let permutation_comm_mptr = fixed_comm_mptr + 2 * vk.fixed_comms.len();
-        let challenge_mptr = permutation_comm_mptr
-            + (2 * vk.permutation_comms.len())
-            + vk.const_expressions.len()
-            + vk.num_advices_user_challenges.len()
-            + (vk.gate_computations.len())
-            + (vk.permutation_computations.len())
-            + (vk.lookup_computations.len())
-            + (vk.pcs_computations.len());
+        let fixed_comm_mptr: Ptr = vk_mptr + vk.constants().len();
+        let permutation_comm_mptr = fixed_comm_mptr + 2 * vk.fixed_comms().len();
+        let challenge_mptr = vk_mptr + vk.len(false);
         let theta_mptr = challenge_mptr + meta.challenge_indices.len();
 
         let advice_comm_start = proof_cptr;
@@ -536,14 +528,14 @@ impl Data {
 impl Data {
     pub(crate) fn new(
         meta: &ConstraintSystemMeta,
-        vk: &Halo2VerifyingKey,
+        vk: &VerifyingCache,
         vk_mptr: Ptr,
         proof_cptr: Ptr,
         _separate: bool,
     ) -> Self {
-        let fixed_comm_mptr = vk_mptr + vk.constants.len();
-        let permutation_comm_mptr = fixed_comm_mptr + 2 * vk.fixed_comms.len();
-        let challenge_mptr = permutation_comm_mptr + 2 * vk.permutation_comms.len();
+        let fixed_comm_mptr: Ptr = vk_mptr + vk.constants().len();
+        let permutation_comm_mptr = fixed_comm_mptr + 2 * vk.fixed_comms().len();
+        let challenge_mptr = vk_mptr + vk.len(false);
         let theta_mptr = challenge_mptr + meta.challenge_indices.len();
 
         let advice_comm_start = proof_cptr;
