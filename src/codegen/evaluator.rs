@@ -646,7 +646,7 @@ where
         let permutation_z_evals: Vec<U256> = data
             .permutation_z_evals
             .iter()
-            .map(|z| self.encode_triplet_evaluation_word(z))
+            .map(|z| self.encode_triplet_evaluation_word(z, 0))
             .collect();
         let column_evals: Vec<Vec<U256>> = meta
             .permutation_columns
@@ -663,7 +663,8 @@ where
                     .collect()
             })
             .collect();
-        // num words each set of permutation data will take up (except the last one) scaled by 0x20
+        // First lsg byte encodes the last index of the permutation_z_evals
+        // The next 2 bytes encode the num words each set of permutation data will take up (except the last one, we use the next 2 bytes for that) scaled by 0x20
         // 48 is the bit offset of the permutation_z_evals and 40 is the bit offset of each column eval.
         let num_words = 1 + ((48 + (meta.permutation_chunk_len) * 40) / 256);
         let perm_meta_data: U256 = {
@@ -766,7 +767,7 @@ where
     #[cfg(feature = "mv-lookup")]
     pub fn lookup_computations(&self, offset: usize) -> LookupsDataEncoded {
         let evaluate_table = |expressions: &Vec<_>| {
-            let offset = 0xa0; // offset to store theta offset ptrs used
+            let offset = 0xa0; // offset to store theta offset ptrs used in the reusable verifier (need to do this to avoid stack too deep errors)
             self.set_static_mem_ptr(offset); // println!("expressions: {:?}", expressions);
             let (lines, inputs) = expressions
                 .iter()
@@ -830,19 +831,10 @@ where
 
         let mut previous_table_lines: Option<Vec<Uint<256, 4>>> = None;
 
-        // Ensure that the number of inputs tables is less than 30 otherwise we won't be able to
-        // pack all of the shared input table expressions into the meta data.
-        assert!(inputs_tables.len() <= 30);
-
-        // meta_data will encode the subsequence_indices as a bitmask, where each byte will store
-        // whether we use the previous table lines or not. If we use the previous table lines then
-        // the byte will be 0x0 otherwise it will be 0x1.
-        let mut meta_data = U256::from(0);
         let lookups: Vec<LookupEncoded> = izip!(inputs_tables, &self.data.lookup_evals)
-            .enumerate() // Add enumeration to track indices
-            .map(|(index, (inputs_tables, evals))| {
+            .map(|(inputs_tables, evals)| {
                 let (inputs, (table_lines, table_inputs)) = inputs_tables.clone();
-                let evals = self.encode_triplet_evaluation_word(evals);
+                let evals = self.encode_triplet_evaluation_word(evals, 8);
                 let table_inputs = Some(self.encode_pack_ptrs(&table_inputs).unwrap());
                 let mut inner_accumulator = 0;
                 let inputs: Vec<InputsEncoded> = inputs
@@ -866,22 +858,18 @@ where
                     inputs: inputs.clone(),
                     acc: accumulator,
                 };
-
-                // bit offset to store the end_ptr
-                let offset = 16;
-
-                // Handle subsequence indexing logic
+                // The first byte in the eval word will store whether we use the previous table lines or not.
+                // If we use the previous table lines then the byte will be 0x0 otherwise it will be 0x1.
                 if let Some(prev_lines) = &previous_table_lines {
                     if *prev_lines != table_lines {
-                        meta_data |= U256::from(0x1) << ((index * 8) + offset);
+                        lookup_encoded.evals |= U256::from(0x1);
                     } else {
                         lookup_encoded.table_lines = Vec::new();
                         lookup_encoded.table_inputs = None;
                     }
                 } else {
-                    meta_data |= U256::from(0x1) << ((index * 8) + offset);
+                    lookup_encoded.evals |= U256::from(0x1);
                 }
-
                 accumulator += lookup_encoded.len();
 
                 previous_table_lines = Some(table_lines);
@@ -889,14 +877,22 @@ where
             })
             .collect_vec();
 
-        let mut data = LookupsDataEncoded { lookups, meta_data };
-        // Insert the end_ptr to the beginning of the meta data word.
-        data.meta_data |= U256::from((data.len() * 32) + offset);
+        if lookups.is_empty() {
+            return LookupsDataEncoded::default();
+        }
+
+        let mut data = LookupsDataEncoded {
+            lookups,
+            meta_data: U256::from(0),
+        };
+        // Insert the num_words and end_ptr to the beginning of the meta data word.
+        let end_ptr = (data.len() * 32) + offset;
+        data.meta_data = U256::from(end_ptr);
         data
     }
 
     #[cfg(not(feature = "mv-lookup"))]
-    pub fn lookup_computations(&self, offset: usize) -> LookupsDataEncoded {
+    pub fn lookup_computations(&self, _offset: usize) -> LookupsDataEncoded {
         unimplemented!(
             "Lookup_computations function is not implemented for the non mv-lookup version of the verifier"
         );
@@ -949,11 +945,15 @@ where
         U256::from(op) | (ptr << 8)
     }
 
-    fn encode_triplet_evaluation_word(&self, value: &(Word, Word, Word)) -> U256 {
+    fn encode_triplet_evaluation_word(
+        &self,
+        value: &(Word, Word, Word),
+        bit_offset: usize,
+    ) -> U256 {
         let (z_i, z_j, z_i_last) = value;
-        U256::from(z_i.ptr().value().as_usize())
-            | U256::from(z_j.ptr().value().as_usize() << 16)
-            | U256::from(z_i_last.ptr().value().as_usize() << 32)
+        U256::from(z_i.ptr().value().as_usize() << bit_offset)
+            | U256::from(z_j.ptr().value().as_usize() << (bit_offset + 16))
+            | U256::from(z_i_last.ptr().value().as_usize() << (bit_offset + 32))
     }
 
     // pack as many as 16 ptrs into a single word

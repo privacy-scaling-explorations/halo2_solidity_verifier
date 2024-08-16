@@ -209,7 +209,7 @@ contract Halo2VerifierReusable {
                     permutation_z_evals_ptr := next_z_ptr
                     z := z_j
                 } 
-                // Due to the fact that permutation_columns.len() in H2 might not be divisble by permutation_chunk_len, the last column length might be less than permutation_chunk_len
+                // Due to the fact that permutation_columns.len() in H2 might not be divisible by permutation_chunk_len, the last column length might be less than permutation_chunk_len
                 // We store this length in the last 16 bits of the num_words_packed word.
                 num_words := and(shr(16, num_words_packed), 0xFFFF)
                 col_evals(z, num_words, permutation_z_evals_ptr, theta_mptr)
@@ -297,6 +297,100 @@ contract Halo2VerifierReusable {
                     vars := shr(16, vars)
                 }
                 ret1 := addmod(ret1, beta, R)
+            }
+
+            function  mv_lookup_evals(table, evals_ptr, quotient_eval_numer, y) -> ret0, ret1, ret2 {
+                // iterate through the input_tables_len
+                let evals := mload(evals_ptr)
+                let new_table := and(evals, 0xFF)
+                evals := shr(8, evals)
+                let phi := and(evals, 0xFFFF)
+                quotient_eval_numer := addmod(
+                    mulmod(quotient_eval_numer, y, R), 
+                    mulmod(mload(0x20),calldataload(phi), R), 
+                    R
+                )
+                quotient_eval_numer := addmod(
+                    mulmod(quotient_eval_numer, y, R),
+                    mulmod(mload(0x00), calldataload(phi), R), 
+                    R
+                )
+                // load in the lookup_table_lines from the evals_ptr
+                evals_ptr := add(evals_ptr, 0x20)
+                // Due to the fact that lookups can share the previous table, we can cache it for reuse.
+                if new_table {
+                    evals_ptr, table := lookup_expr_evals_packed(0xa0, evals_ptr, mload(evals_ptr), mload(0x60), mload(0x80))
+                    evals_ptr := add(evals_ptr, 0x20)
+                }
+                let input_expression := mload(evals_ptr)
+                // outer inputs len, stored in the first input expression word, shifted up by the free static memory offset of 0xa0
+                let outer_inputs_len := and(input_expression, 0xFFFF)
+                input_expression := shr(16, input_expression)
+                for { let j := 0xa0 } lt(j, add(outer_inputs_len, 0xa0)) { j := add(j, 0x20) } {
+                    // call the expression_evals function to evaluate the input_lines
+                    let ident
+                    evals_ptr, ident := lookup_expr_evals_packed(j, evals_ptr, input_expression, mload(0x60), mload(0x80))
+                    evals_ptr := add(evals_ptr, 0x20)
+                    input_expression := mload(evals_ptr)
+                    // store ident in free static memory
+                    mstore(j, ident)
+                }
+                let lhs
+                let rhs
+                switch eq(outer_inputs_len, 0x20)
+                case 1 {
+                    rhs := table
+                } default {
+                    // iterate through the outer_inputs_len
+                    let last_idx := sub(outer_inputs_len, 0x20)
+                    for { let i := 0 } lt(i, outer_inputs_len) { i := add(i, 0x20) } {
+                        let tmp := mload(0xa0)
+                        if eq(i, 0){
+                            tmp := mload(0xc0)
+                        }
+                        for { let j := 0 } lt(j, outer_inputs_len) { j := add(j, 0x20) } {
+                            if eq(i, j) {
+                                continue
+                            }
+                            tmp := mulmod(tmp, mload(j), R)
+                            
+                        }
+                        rhs := addmod(rhs, tmp, R)
+                        if eq(i, last_idx) {
+                            rhs := mulmod(rhs, table, R)
+                        } 
+                    }
+                }
+                let tmp := mload(0xa0)
+                for { let j := 0x20 } lt(j, outer_inputs_len) { j := add(j, 0x20) } {
+                    tmp := mulmod(tmp, mload(j), R)
+                }
+                rhs := addmod(
+                    rhs, 
+                    sub(R, mulmod(calldataload(and(shr(32, evals), 0xFFFF)), tmp, R)),
+                    R
+                )
+                lhs := mulmod(
+                    mulmod(table, tmp, R),
+                    addmod(calldataload(and(shr(16, evals), 0xFFFF)), sub(R, calldataload(phi)), R), 
+                    R
+                )
+                quotient_eval_numer := addmod(
+                    mulmod(quotient_eval_numer, y, R),
+                    mulmod(
+                        addmod(
+                            1, 
+                            sub(R, addmod(mload(0x40), mload(0x00), R)),
+                            R
+                        ), 
+                        addmod(lhs, sub(R, rhs), R),
+                        R
+                    ), 
+                    R
+                )
+                ret0 := evals_ptr
+                ret1 := table
+                ret2 := quotient_eval_numer
             }
 
             function point_rots(pcs_computations, pcs_ptr, word_shift, x_pow_of_omega, omega) -> ret0, ret1 {
@@ -903,103 +997,15 @@ contract Halo2VerifierReusable {
                     mstore(0x40, mload(add(theta_mptr, 0x1E0))) // l_blind
                     mstore(0x60, mload(theta_mptr)) // theta
                     mstore(0x80, mload(add(theta_mptr, 0x20))) // beta
-                    let evals_ptr, lookup_meta_data := soa_layout_metadata({{ 
+                    let evals_ptr, end_ptr := soa_layout_metadata({{ 
                         vk_const_offsets["lookup_computations_len_offset"]|hex()
                     }}, vk_mptr)
                     // lookup meta data contains 32 byte flags for indicating if we need to do a lookup table lines 
                     // expression evaluation or we can use the previous one cached in the table var. 
-                    if lookup_meta_data {
+                    if end_ptr {
                         let table
-                        let end_ptr := and(lookup_meta_data, 0xFFFF)
-                        lookup_meta_data := shr(16, lookup_meta_data)
-                        // iterate through the input_tables_len
                         for { } lt(evals_ptr, end_ptr) { } {
-                            let evals := mload(evals_ptr)
-                            let phi := and(evals, 0xFFFF)
-                            quotient_eval_numer := addmod(
-                                mulmod(quotient_eval_numer, y, R), 
-                                mulmod(mload(0x20),calldataload(phi), R), 
-                                R
-                            )
-                            quotient_eval_numer := addmod(
-                                mulmod(quotient_eval_numer, y, R),
-                                mulmod(mload(0x00), calldataload(phi), R), 
-                                R
-                            )
-                            // load in the lookup_table_lines from the evals_ptr
-                            evals_ptr := add(evals_ptr, 0x20)
-                            // Due to the fact that lookups share the previous table, we can cache the previous table.
-                            if and(lookup_meta_data, 0xFF) {
-                                evals_ptr, table := lookup_expr_evals_packed(0xa0, evals_ptr, mload(evals_ptr), mload(0x60), mload(0x80))
-                                evals_ptr := add(evals_ptr, 0x20)
-                            }
-                            lookup_meta_data := shr(8, lookup_meta_data)
-                            let input_expression := mload(evals_ptr)
-                            // outer inputs len, stored in the first input expression word, shifted up by the free static memory offset of 0xa0
-                            let outer_inputs_len := and(input_expression, 0xFFFF)
-                            input_expression := shr(16, input_expression)
-                            for { let j := 0xa0 } lt(j, add(outer_inputs_len, 0xa0)) { j := add(j, 0x20) } {
-                                // call the expression_evals function to evaluate the input_lines
-                                let ident
-                                evals_ptr, ident := lookup_expr_evals_packed(j, evals_ptr, input_expression, mload(0x60), mload(0x80))
-                                evals_ptr := add(evals_ptr, 0x20)
-                                input_expression := mload(evals_ptr)
-                                // store ident in free static memory
-                                mstore(j, ident)
-                            }
-                            let lhs
-                            let rhs
-                            switch eq(outer_inputs_len, 0x20)
-                            case 1 {
-                                rhs := table
-                            } default {
-                                // iterate through the outer_inputs_len
-                                let last_idx := sub(outer_inputs_len, 0x20)
-                                for { let i := 0 } lt(i, outer_inputs_len) { i := add(i, 0x20) } {
-                                    let tmp := mload(0xa0)
-                                    if eq(i, 0){
-                                        tmp := mload(0xc0)
-                                    }
-                                    for { let j := 0 } lt(j, outer_inputs_len) { j := add(j, 0x20) } {
-                                        if eq(i, j) {
-                                            continue
-                                        }
-                                        tmp := mulmod(tmp, mload(j), R)
-                                        
-                                    }
-                                    rhs := addmod(rhs, tmp, R)
-                                    if eq(i, last_idx) {
-                                        rhs := mulmod(rhs, table, R)
-                                    } 
-                                }
-                            }
-                            let tmp := mload(0xa0)
-                            for { let j := 0x20 } lt(j, outer_inputs_len) { j := add(j, 0x20) } {
-                                tmp := mulmod(tmp, mload(j), R)
-                            }
-                            rhs := addmod(
-                                rhs, 
-                                sub(R, mulmod(calldataload(and(shr(32, evals), 0xFFFF)), tmp, R)),
-                                R
-                            )
-                            lhs := mulmod(
-                                mulmod(table, tmp, R),
-                                addmod(calldataload(and(shr(16, evals), 0xFFFF)), sub(R, calldataload(phi)), R), 
-                                R
-                            )
-                            quotient_eval_numer := addmod(
-                                mulmod(quotient_eval_numer, y, R),
-                                mulmod(
-                                    addmod(
-                                        1, 
-                                        sub(R, addmod(mload(0x40), mload(0x00), R)),
-                                        R
-                                    ), 
-                                    addmod(lhs, sub(R, rhs), R),
-                                    R
-                                ), 
-                                R
-                            )
+                            evals_ptr, table, quotient_eval_numer := mv_lookup_evals(table, evals_ptr, quotient_eval_numer, y)
                         }
                     }
                 }
