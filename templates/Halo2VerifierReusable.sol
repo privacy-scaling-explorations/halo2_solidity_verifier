@@ -283,7 +283,7 @@ contract Halo2VerifierReusable {
 
             function lookup_expr_evals_packed(fsmp, code_ptr, expressions_word, theta, beta) -> ret0, ret1 {
                 let idx
-                let vars // packed vars with mload cptrs to load in the vars stored in static memory in the 
+                let vars // packed vars with ptrs to load in the vars stored in static memory in the 
                 // expression evaluation.
                 ret0, vars, idx := expression_evals_packed(fsmp, code_ptr, expressions_word)
                 ret1 := mload(and(vars, 0xFFFF)) // initlaize the accumulator with the first value in the vars
@@ -302,6 +302,7 @@ contract Halo2VerifierReusable {
             function  mv_lookup_evals(table, evals_ptr, quotient_eval_numer, y) -> ret0, ret1, ret2 {
                 // iterate through the input_tables_len
                 let evals := mload(evals_ptr)
+                // We store a boolean flag in the first LSG byte of the evals ptr to determine if we need to load in a new table or reuse the previous table.
                 let new_table := and(evals, 0xFF)
                 evals := shr(8, evals)
                 let phi := and(evals, 0xFFFF)
@@ -323,9 +324,10 @@ contract Halo2VerifierReusable {
                     evals_ptr := add(evals_ptr, 0x20)
                 }
                 let input_expression := mload(evals_ptr)
-                // outer inputs len, stored in the first input expression word, shifted up by the free static memory offset of 0xa0
+                // outer inputs len, stored in the first input expression word
                 let outer_inputs_len := and(input_expression, 0xFFFF)
                 input_expression := shr(16, input_expression)
+                // shift up the inputs iterator by the free static memory offset of 0xa0
                 for { let j := 0xa0 } lt(j, add(outer_inputs_len, 0xa0)) { j := add(j, 0x20) } {
                     // call the expression_evals function to evaluate the input_lines
                     let ident

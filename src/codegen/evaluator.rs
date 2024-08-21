@@ -453,7 +453,7 @@ pub enum OperandMem {
     StaticMemory,
 }
 
-// Holds the encoded data stored in the separate VK
+// Holds the encoded data stored in the VK artifact
 // needed to perform the gate computations of
 // the quotient evaluation portion of the reusable verifier.
 #[derive(Clone, PartialEq, Eq, Default)]
@@ -472,7 +472,7 @@ impl GateDataEncoded {
     }
 }
 
-// Holds the encoded data stored in the separate VK
+// Holds the encoded data stored in the VK artifact
 // needed to perform the permutation computations of
 // the quotient evaluation portion of the reusable verifier.
 #[derive(Clone, PartialEq, Eq)]
@@ -507,9 +507,8 @@ pub struct InputsEncoded {
     pub(crate) acc: usize,
 }
 
-// Holds the encoded data stored in the separate VK
+// Holds the encoded data stored in the VK artifact
 // needed to perform the lookup computations for one lookup table
-// in the quotient evaluation portion of the reusable verifier.
 #[derive(Clone, PartialEq, Eq)]
 pub struct LookupEncoded {
     pub(crate) evals: U256,
@@ -520,13 +519,17 @@ pub struct LookupEncoded {
 }
 
 // For each element of the lookups vector we have a word for:
-// 1) the evals (cptr, cptr, cptr),
+// 1) the evals (new_table: bool, (cptr, cptr, cptr))
 // 2) table_lines Vec<packed_expressions>
 // 3) table_inputs Vec<mptr> packed into a single (throws an error if table_inputs.len() > 16)
+// these values represent the set of table_lines results that are used to compute the accumulator evaluation of the
+// lookup table.
 // 4) outer_inputs_len (inputs.0.len())
 // For each element of the inputs vector in LookupEncoded we have a word for:
 // 1) inputs (inputs[i].expressions)
 // 2) input_vars Vec<mptr> packed into a single (throws an error if > 16)
+// these values represent the set of input expression results that are used to compute the accumulator evaluation of the
+// lookup inputs.
 // Then we have a word for each step in the expression evaluation. This is the
 // sum of the lengths of the inputs.
 impl LookupEncoded {
@@ -547,7 +550,7 @@ impl LookupEncoded {
     }
 }
 
-// Holds the encoded data stored in the separate VK
+// Holds the encoded data stored in the VK artifact
 // needed to perform the lookup computations of all the lookup tables
 // needed in the quotient evaluation portion of the reusable verifier.
 #[derive(Clone, PartialEq, Eq)]
@@ -777,7 +780,7 @@ where
                     acc.1.push(result.1);
                     acc
                 });
-            assert!(inputs.len() <= 16);
+            assert!(inputs.len() <= 16, "lookup_table_inputs.len() > 16");
             self.reset();
             let lines_packed = self.encode_pack_expr_operations(lines, 8);
             (lines_packed, inputs)
@@ -798,10 +801,23 @@ where
                     acc
                 });
             self.reset();
+            assert!(inputs.len() <= 16, "input_vars.len() > 16");
             // bit offset to store the number of inputs
             let bit_offset = if idx == 0 { 24 } else { 8 };
             let lines_packed = self.encode_pack_expr_operations(lines, bit_offset);
             (lines_packed, inputs)
+        };
+
+        let is_contiguous = |positions: &[usize]| -> bool {
+            if positions.is_empty() {
+                return true;
+            }
+            for window in positions.windows(2) {
+                if window[1] != window[0] + 1 {
+                    return false;
+                }
+            }
+            true
         };
 
         let inputs_tables = self
@@ -830,9 +846,12 @@ where
         let mut accumulator = 0;
 
         let mut previous_table_lines: Option<Vec<Uint<256, 4>>> = None;
+        // Hshmap used to check for contigious table_expressions in the lookups
+        let mut table_expression_positions: HashMap<Vec<Uint<256, 4>>, Vec<usize>> = HashMap::new();
 
         let lookups: Vec<LookupEncoded> = izip!(inputs_tables, &self.data.lookup_evals)
-            .map(|(inputs_tables, evals)| {
+            .enumerate()
+            .map(|(lookup_index, (inputs_tables, evals))| {
                 let (inputs, (table_lines, table_inputs)) = inputs_tables.clone();
                 let evals = self.encode_triplet_evaluation_word(evals, 8);
                 let table_inputs = Some(self.encode_pack_ptrs(&table_inputs).unwrap());
@@ -850,6 +869,11 @@ where
                         res
                     })
                     .collect_vec();
+
+                table_expression_positions
+                    .entry(table_lines.clone())
+                    .or_default()
+                    .push(lookup_index);
 
                 let mut lookup_encoded = LookupEncoded {
                     evals,
@@ -876,6 +900,18 @@ where
                 lookup_encoded
             })
             .collect_vec();
+
+        // Check if any table_expressions (Vec<Expression<F>>) have non-contiguous positions
+        for (table_exprs, positions) in table_expression_positions.iter() {
+            if !is_contiguous(positions) {
+                eprintln!(
+                    "Warning: The table expressions `{:?}` are not contiguous across lookups. \
+                    Consider reordering your lookups so that all occurrences of this table expression \
+                    are adjacent to each other. This will result in more gas efficient verifications",
+                    table_exprs
+                );
+            }
+        }
 
         if lookups.is_empty() {
             return LookupsDataEncoded::default();
@@ -978,9 +1014,9 @@ where
         for expr in exprs.iter() {
             let first_byte = expr.as_limbs()[0] & 0xFF;
             let offset = if first_byte == 0 || first_byte == 1 {
-                24
+                24 // single operand operation bit offset
             } else {
-                40
+                40 // multi operand operation bit offset
             };
 
             let mut next_bit_counter = bit_counter + offset;
