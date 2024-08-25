@@ -744,7 +744,7 @@ contract Halo2VerifierReusable {
                 let challenge_len_data := mload(challenge_len_ptr)
                 let num_words := and(challenge_len_data, BYTE_FLAG_BITMASK)
                 challenge_len_data := shr(8, challenge_len_data)
-                for { let i := 0 } lt(i, 1) { i := add(i, 1) } {
+                for { let i := 0 } lt(i, num_words) { i := add(i, 1) } {
                     for { } challenge_len_data { } {
                         // add proof_cpt to num advices len
                         let proof_cptr_end := add(proof_cptr, and(challenge_len_data, PTR_BITMASK))
@@ -1098,16 +1098,20 @@ contract Halo2VerifierReusable {
                     }
                     pop(mu)
                     vanishing_computations := shr(16, vanishing_computations)
-                    let s
-                    s := mload(and(vanishing_computations, PTR_BITMASK))
+                    let num_words := and(vanishing_computations, BYTE_FLAG_BITMASK)
+                    vanishing_computations := shr(8, vanishing_computations)
+                    let s := mload(and(vanishing_computations, PTR_BITMASK))
                     vanishing_computations := shr(16, vanishing_computations)
-                    for {  } vanishing_computations {  } {
-                        s := mulmod(s, mload(and(vanishing_computations, PTR_BITMASK)), R)
-                        vanishing_computations := shr(16, vanishing_computations)
+                    for { let i } lt(i, num_words) { i := add(i, 1) } {
+                        for {  } vanishing_computations {  } {
+                            s := mulmod(s, mload(and(vanishing_computations, PTR_BITMASK)), R)
+                            vanishing_computations := shr(16, vanishing_computations)
+                        }    
+                        pcs_ptr := add(pcs_ptr, 0x20)
+                        vanishing_computations := mload(pcs_ptr)
                     }
-                    pcs_ptr := add(pcs_ptr, 0x20)
-                    vanishing_computations := mload(pcs_ptr)
-                    mstore(and(vanishing_computations, PTR_BITMASK), s)
+                    let diff_ptr := and(vanishing_computations, PTR_BITMASK)
+                    mstore(diff_ptr, s)
                     vanishing_computations := shr(16, vanishing_computations)
                     let diff
                     let sets_len := and(vanishing_computations, PTR_BITMASK)
@@ -1116,12 +1120,12 @@ contract Halo2VerifierReusable {
                     for { let i := 0 } lt(i, sets_len) { i := add(i, 1) } {
                         diff := mload(and(vanishing_computations, PTR_BITMASK))
                         vanishing_computations := shr(16, vanishing_computations)
-                        for { } and(vanishing_computations, PTR_BITMASK) { } {
+                        for { } vanishing_computations { } {
                             diff := mulmod(diff, mload(and(vanishing_computations, PTR_BITMASK)), R)
                             vanishing_computations := shr(16, vanishing_computations)
                         }
-                        vanishing_computations := shr(16, vanishing_computations)
-                        mstore(and(vanishing_computations, PTR_BITMASK), diff)
+                        diff_ptr := add(0x20, diff_ptr)
+                        mstore(diff_ptr, diff)
                         if eq(i, 0) {
                             mstore(0x00, diff)
                         }

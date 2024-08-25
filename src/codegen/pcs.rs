@@ -773,25 +773,36 @@ pub(crate) fn bdfg21_computations_dynamic(
     };
 
     let vanishing_computations: Vec<U256> = {
-        let pack_mptrs_and_s_ptrs = {
+        let pack_mptrs_and_s_ptrs: Vec<U256> = {
             let mptr = mu_minus_points.first_key_value().unwrap().1.ptr();
             let mptr_word = U256::from(mptr.value().as_usize());
             let mptr_end = mptr + mu_minus_points.len();
             let mptr_end_word = U256::from(mptr_end.value().as_usize());
-            let mut packed_word = U256::from(0);
+            let mut last_idx = 0;
+            let mut packed_words = vec![U256::from(0)];
             // start packing the mptrs
-            packed_word |= mptr_word;
-            packed_word |= mptr_end_word << 16;
-            packed_word |= U256::from(free_mptr.value().as_usize()) << 32;
-            let mut offset = 48;
+            packed_words[0] |= mptr_word;
+            packed_words[0] |= mptr_end_word << 16;
+            packed_words[0] |= U256::from(free_mptr.value().as_usize()) << 32;
+            // bit offset length to where the number of words allocated to the s_ptrs will be stored.
+            let words_alloc_offset = 48;
+            let mut bit_counter = words_alloc_offset + 8;
             // start packing the s_ptrs
             sets[0].rots().iter().for_each(|rot| {
                 // panic if offset is exceeds 256
-                assert!(offset <= 256);
-                packed_word |= U256::from(mu_minus_points[rot].ptr().value().as_usize()) << offset;
-                offset += 16;
+                let next_bit_counter = bit_counter + 16;
+                if next_bit_counter > 256 {
+                    last_idx += 1;
+                    packed_words.push(U256::from(0));
+                    bit_counter = 0;
+                }
+                packed_words[last_idx] |=
+                    U256::from(mu_minus_points[rot].ptr().value().as_usize()) << bit_counter;
+                bit_counter += 16;
             });
-            packed_word
+            // store the num words allocated for s_ptrs
+            packed_words[0] |= U256::from(last_idx + 1) << words_alloc_offset;
+            packed_words
         };
         let pack_vanishing_0_and_sets_len: ruint::Uint<256, 4> = {
             let vanishing_0_word = U256::from(vanishing_0.ptr().value().as_usize());
@@ -802,8 +813,8 @@ pub(crate) fn bdfg21_computations_dynamic(
             packed_word
         };
         let pack_set_diffs_words: Vec<ruint::Uint<256, 4>> = {
-            izip!(&sets, &diffs)
-                .map(|(set, diff)| {
+            sets.iter()
+                .map(|set| {
                     let mut packed_word = U256::from(0);
                     let mut offset = 0;
                     set.diffs().iter().for_each(|rot| {
@@ -816,11 +827,6 @@ pub(crate) fn bdfg21_computations_dynamic(
                         packed_word |= U256::from(0x20) << offset;
                         offset += 16;
                     }
-                    // pack a blank ptr
-                    packed_word |= U256::from(0) << offset;
-                    offset += 16;
-                    // pack the diff.ptr()
-                    packed_word |= U256::from(diff.ptr().value().as_usize()) << offset;
                     assert!(
                         offset <= 256,
                         "The offset for packing the set diff word exceeds 256 bits",
@@ -830,7 +836,8 @@ pub(crate) fn bdfg21_computations_dynamic(
                 .collect_vec()
         };
         chain!(
-            [pack_mptrs_and_s_ptrs, pack_vanishing_0_and_sets_len],
+            pack_mptrs_and_s_ptrs.into_iter(),
+            [pack_vanishing_0_and_sets_len],
             pack_set_diffs_words.into_iter()
         )
         .collect_vec()
@@ -1122,7 +1129,7 @@ pub(crate) fn bdfg21_computations_dynamic(
             let offset = 24;
             let next_bit_counter = bit_counter + offset;
             let len = coeffs.len() * 32;
-            assert!(len < 256, "The length of the coeffs exceeds 256 bits",);
+            assert!(len < 256, "The length of the coeffs exceeds 256 bits");
             if next_bit_counter > 256 {
                 last_idx += 1;
                 packed_words.push(U256::from(0));
