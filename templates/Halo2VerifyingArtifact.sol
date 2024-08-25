@@ -45,23 +45,14 @@ contract Halo2VerifyingArtifact {
             {%- for lookup in lookup_computations.lookups %}
             {%- let offset = base_offset + lookup.acc %}
             mstore({{ (32 * offset)|hex_padded(4) }}, {{ lookup.evals|hex_padded(64) }}) // lookup_evals[{{ loop.index0 }}]
-            {%- let table_inputs = lookup.table_inputs %}
-            {%- let branching_offset %}
-            {%- if let Some(table_inputs) = table_inputs %}
             {%- for table_line in lookup.table_lines %}
             mstore({{ (32 * (offset + 1 + loop.index0))|hex_padded(4) }}, {{ table_line|hex_padded(64) }}) // lookup_table_line [{{ loop.index0 }}]
             {%- endfor %}
-            mstore({{ (32 * (offset + 1 + lookup.table_lines.len()))|hex_padded(4) }}, {{ table_inputs|hex_padded(64) }}) // lookup_table_inputs [{{ loop.index0 }}]
-            {%- let branching_offset = offset + 1 + lookup.table_lines.len() %}
-            {%- else %}
-            {%- let branching_offset = offset %}
-            {%- endif %}
             {%- for input in lookup.inputs %}
-            {%- let offset = branching_offset + loop.index0 + input.acc %}
+            {%- let offset = offset + 1 + lookup.table_lines.len() + loop.index0 + input.acc %}
             {%- for expression in input.expression %}
-            mstore({{ (32 * (offset + loop.index0 + 1))|hex_padded(4) }}, {{ expression|hex_padded(64) }}) // input_expression [{{ loop.index0 }}]
+            mstore({{ (32 * (offset + loop.index0))|hex_padded(4) }}, {{ expression|hex_padded(64) }}) // input_expression [{{ loop.index0 }}]
             {%- endfor %}
-            mstore({{ (32 * (offset + input.expression.len() + 1))|hex_padded(4) }}, {{ input.vars|hex_padded(64) }}) // input_vars [{{ loop.index0 }}]
             {%- endfor %}
             {%- endfor %}
             {%- let offset_8 = offset_7 + lookup_computations.len() %}

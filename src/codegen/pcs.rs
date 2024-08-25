@@ -716,12 +716,14 @@ pub(crate) fn bdfg21_computations_dynamic(
     let point_computations: Vec<U256> = {
         let pack_words = |points: Vec<U256>, interm_point: Option<U256>| {
             let mut packed_words: Vec<U256> = vec![U256::from(0)];
-            let mut bit_counter = 32;
+            let mut bit_counter = 8;
             let points_len = points.len();
+            // assert that points_len is less than 256 bits so that it fits into 1 byte.
+            assert!(points_len < 256);
             if let Some(interm_point) = interm_point {
                 packed_words[0] |= interm_point;
                 packed_words[0] |= U256::from(points_len) << 16;
-                bit_counter = 48;
+                bit_counter = 24;
             } else {
                 packed_words[0] |= U256::from(points_len);
             }
@@ -814,7 +816,7 @@ pub(crate) fn bdfg21_computations_dynamic(
                         packed_word |= U256::from(0x20) << offset;
                         offset += 16;
                     }
-                    // pack a blank word
+                    // pack a blank ptr
                     packed_word |= U256::from(0) << offset;
                     offset += 16;
                     // pack the diff.ptr()

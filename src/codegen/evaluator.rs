@@ -503,7 +503,6 @@ impl PermutationDataEncoded {
 #[derive(Clone, PartialEq, Eq)]
 pub struct InputsEncoded {
     pub(crate) expression: Vec<U256>,
-    pub(crate) vars: U256,
     pub(crate) acc: usize,
 }
 
@@ -513,7 +512,6 @@ pub struct InputsEncoded {
 pub struct LookupEncoded {
     pub(crate) evals: U256,
     pub(crate) table_lines: Vec<U256>,
-    pub(crate) table_inputs: Option<U256>,
     pub(crate) acc: usize,
     pub(crate) inputs: Vec<InputsEncoded>,
 }
@@ -534,13 +532,8 @@ pub struct LookupEncoded {
 // sum of the lengths of the inputs.
 impl LookupEncoded {
     pub fn len(&self) -> usize {
-        let base_len = if self.table_inputs.is_none() {
-            1 // Add 2 if table_inputs is none
-        } else {
-            2 // Add 3 otherwise
-        };
+        let base_len = 1; // Add 2 if table_inputs is none
         base_len
-            + (self.inputs.len())
             + self
                 .inputs
                 .iter()
@@ -780,10 +773,8 @@ where
                     acc.1.push(result.1);
                     acc
                 });
-            assert!(inputs.len() <= 16, "lookup_table_inputs.len() > 16");
             self.reset();
-            let lines_packed = self.encode_pack_expr_operations(lines, 8);
-            (lines_packed, inputs)
+            self.encode_pack_expr_operations(lines, 8, Some(inputs))
         };
 
         let evaluate_inputs = |idx: usize, expressions: &Vec<_>| {
@@ -801,11 +792,9 @@ where
                     acc
                 });
             self.reset();
-            assert!(inputs.len() <= 16, "input_vars.len() > 16");
             // bit offset to store the number of inputs
             let bit_offset = if idx == 0 { 24 } else { 8 };
-            let lines_packed = self.encode_pack_expr_operations(lines, bit_offset);
-            (lines_packed, inputs)
+            self.encode_pack_expr_operations(lines, bit_offset, Some(inputs))
         };
 
         let is_contiguous = |positions: &[usize]| -> bool {
@@ -831,11 +820,11 @@ where
                 let inputs = inputs_iter
                     .clone()
                     .map(|(idx, expressions)| {
-                        let (mut lines, inputs) = evaluate_inputs(idx, expressions);
+                        let mut lines = evaluate_inputs(idx, expressions);
                         if idx == 0 {
                             lines[0] |= U256::from(outer_inputs_len);
                         }
-                        (lines, inputs)
+                        lines
                     })
                     .collect_vec();
                 let table = evaluate_table(lookup.table_expressions());
@@ -852,20 +841,17 @@ where
         let lookups: Vec<LookupEncoded> = izip!(inputs_tables, &self.data.lookup_evals)
             .enumerate()
             .map(|(lookup_index, (inputs_tables, evals))| {
-                let (inputs, (table_lines, table_inputs)) = inputs_tables.clone();
+                let (inputs, table_lines) = inputs_tables.clone();
                 let evals = self.encode_triplet_evaluation_word(evals, 8);
-                let table_inputs = Some(self.encode_pack_ptrs(&table_inputs).unwrap());
                 let mut inner_accumulator = 0;
                 let inputs: Vec<InputsEncoded> = inputs
                     .iter()
-                    .map(|(input_lines, inputs)| {
-                        let inputs = self.encode_pack_ptrs(inputs).unwrap();
+                    .map(|input_lines| {
                         let res = InputsEncoded {
                             expression: input_lines.clone(),
-                            vars: inputs,
                             acc: inner_accumulator,
                         };
-                        inner_accumulator += input_lines.len() + 1;
+                        inner_accumulator += input_lines.len();
                         res
                     })
                     .collect_vec();
@@ -878,7 +864,6 @@ where
                 let mut lookup_encoded = LookupEncoded {
                     evals,
                     table_lines: table_lines.clone(),
-                    table_inputs,
                     inputs: inputs.clone(),
                     acc: accumulator,
                 };
@@ -889,7 +874,6 @@ where
                         lookup_encoded.evals |= U256::from(0x1);
                     } else {
                         lookup_encoded.table_lines = Vec::new();
-                        lookup_encoded.table_inputs = None;
                     }
                 } else {
                     lookup_encoded.evals |= U256::from(0x1);
@@ -992,21 +976,12 @@ where
             | U256::from(z_i_last.ptr().value().as_usize() << (bit_offset + 32))
     }
 
-    // pack as many as 16 ptrs into a single word
-    // throws an error if the number of ptrs is greater than 16
-    fn encode_pack_ptrs(&self, ptrs: &[U256]) -> Result<U256, &'static str> {
-        if ptrs.len() > 16 {
-            return Err("Number of pointers cannot be greater than 16");
-        }
-
-        let mut packed = U256::from(0);
-        for (i, ptr) in ptrs.iter().enumerate() {
-            packed |= *ptr << (i * 16);
-        }
-        Ok(packed)
-    }
-
-    fn encode_pack_expr_operations(&self, exprs: Vec<U256>, mut bit_counter: i32) -> Vec<U256> {
+    fn encode_pack_expr_operations(
+        &self,
+        exprs: Vec<U256>,
+        mut bit_counter: i32,
+        lookup_inputs: Option<Vec<U256>>,
+    ) -> Vec<U256> {
         let mut packed_words: Vec<U256> = vec![U256::from(0)];
         let mut last_idx = 0;
         let initial_offset = bit_counter;
@@ -1019,16 +994,44 @@ where
                 40 // multi operand operation bit offset
             };
 
-            let mut next_bit_counter = bit_counter + offset;
+            let next_bit_counter = bit_counter + offset;
             if next_bit_counter > 256 {
                 last_idx += 1;
                 packed_words.push(U256::from(0));
-                next_bit_counter = offset;
-                packed_words[last_idx] = *expr
-            } else {
-                packed_words[last_idx] |= *expr << bit_counter;
+                bit_counter = 0;
             }
-            bit_counter = next_bit_counter;
+            packed_words[last_idx] |= *expr << bit_counter;
+            bit_counter += offset;
+        }
+        if let Some(inputs) = lookup_inputs {
+            // 1 byte for op flag (0x04) followed by 1 byte for the number of words allocated.
+            let offset = 16;
+            let next_bit_counter = bit_counter + offset;
+            if next_bit_counter > 256 {
+                last_idx += 1;
+                packed_words.push(U256::from(0));
+                bit_counter = 0;
+            }
+            let start_idx = last_idx;
+            packed_words[last_idx] |= U256::from(4_u8) << bit_counter;
+            bit_counter += 8;
+            let length_bit_offset = bit_counter;
+            bit_counter += 8;
+            // iterate over the inputs
+            for input in inputs.iter() {
+                let offset = 16;
+                let next_bit_counter = bit_counter + offset;
+                if next_bit_counter > 256 {
+                    last_idx += 1;
+                    packed_words.push(U256::from(0));
+                    bit_counter = 0;
+                }
+                packed_words[last_idx] |= *input << bit_counter;
+                bit_counter += 16;
+            }
+            let allocated_words = last_idx - start_idx + 1;
+            // Encode the number of words allocated for the lookup input vars (after the 0x04 flag)
+            packed_words[start_idx] |= U256::from(allocated_words) << length_bit_offset;
         }
 
         let packed_words_len = packed_words.len();
@@ -1046,7 +1049,7 @@ where
         self.reset();
         let res = result.0;
         if pack {
-            self.encode_pack_expr_operations(res, 8)
+            self.encode_pack_expr_operations(res, 8, None)
         } else {
             res
         }
