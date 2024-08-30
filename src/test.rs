@@ -165,7 +165,7 @@ mod halo2 {
     pub fn create_testdata_bdfg21<C: TestCircuit<bn256::Fr>>(
         k: u32,
         acc_encoding: Option<AccumulatorEncoding>,
-        mut rng: impl RngCore + Clone,
+        mut rng: impl RngCore + Clone + Sync + Send,
     ) -> (
         ParamsKZG<bn256::Bn256>,
         VerifyingKey<bn256::G1Affine>,
@@ -216,7 +216,8 @@ mod halo2 {
     where
         M: MultiMillerLoop,
         M::G1Affine: CurveAffine<ScalarExt = M::Fr>,
-        <M::G1Affine as CurveAffine>::Base: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
+        <M::G1Affine as CurveAffine>::Base:
+            PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
         M::Fr: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
     {
         let s = M::Fr::random(&mut rng);
@@ -257,7 +258,7 @@ mod halo2 {
         F1: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
         F2: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
     {
-        let big = U256::from_le_bytes(fe.borrow().to_repr());
+        let big = U256::from_le_bytes(fe.borrow().to_repr().inner().clone());
         let mask = &((U256::from(1) << num_limb_bits) - U256::from(1));
         (0usize..)
             .step_by(num_limb_bits)
@@ -271,7 +272,7 @@ mod halo2 {
         F: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
     {
         let bytes = u256.borrow().to_le_bytes::<32>();
-        F::from_repr_vartime(bytes).unwrap()
+        F::from_repr_vartime(bytes.into()).unwrap()
     }
 
     pub mod huge {
@@ -303,8 +304,10 @@ mod halo2 {
         where
             M: MultiMillerLoop,
             M::G1Affine: CurveAffine<ScalarExt = M::Fr>,
-            <M::G1Affine as CurveAffine>::ScalarExt: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
-            <M::G1Affine as CurveAffine>::Base: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
+            <M::G1Affine as CurveAffine>::ScalarExt:
+                PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
+            <M::G1Affine as CurveAffine>::Base:
+                PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
             M::Fr: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
         {
             fn min_k() -> u32 {
@@ -538,8 +541,10 @@ mod halo2 {
         where
             M: MultiMillerLoop,
             M::G1Affine: CurveAffine<ScalarExt = M::Fr>,
-            <M::G1Affine as CurveAffine>::ScalarExt: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
-            <M::G1Affine as CurveAffine>::Base: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
+            <M::G1Affine as CurveAffine>::ScalarExt:
+                PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
+            <M::G1Affine as CurveAffine>::Base:
+                PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
             M::Fr: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
         {
             fn min_k() -> u32 {

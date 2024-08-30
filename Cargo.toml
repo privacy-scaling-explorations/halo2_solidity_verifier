@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-halo2_proofs = { git = "https://github.com/zkonduit/halo2", rev = "d9d470ce8c8e64293c0e678bb3c99685497d0b08" }
+halo2_proofs = { git = "https://github.com/zkonduit/halo2?branch=ac/cache-lookup-commitments#8b13a0d2a7a34d8daab010dadb2c47dfa47d37d0", package = "halo2_proofs", branch = "ac/cache-lookup-commitments" }
 askama = { version = "0.12.0", features = ["config"], default-features = false }
 hex = "0.4.3"
 ruint = "1.8.0"
@@ -31,3 +31,6 @@ mv-lookup = ["halo2_proofs/mv-lookup", "halo2_maingate/mv-lookup"]
 [[example]]
 name = "separately"
 required-features = ["evm"]
+
+[patch.'https://github.com/zkonduit/halo2']
+halo2_proofs = { git = "https://github.com/zkonduit/halo2?branch=ac/cache-lookup-commitments#8b13a0d2a7a34d8daab010dadb2c47dfa47d37d0", package = "halo2_proofs", branch = "ac/cache-lookup-commitments" }
