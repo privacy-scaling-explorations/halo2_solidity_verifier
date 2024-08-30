@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-halo2_proofs = { git = "https://github.com/zkonduit/halo2", rev = "38abade26078496aa4d8738b967b0e7fa5d9505c" }
+halo2_proofs = { git = "https://github.com/zkonduit/halo2", rev = "d9d470ce8c8e64293c0e678bb3c99685497d0b08" }
 askama = { version = "0.12.0", features = ["config"], default-features = false }
 hex = "0.4.3"
 ruint = "1.8.0"
