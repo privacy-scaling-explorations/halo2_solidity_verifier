@@ -81,7 +81,7 @@ fn run_render_separately<C: halo2::TestCircuit<Fr>>() {
     let verifier_creation_code = compile_solidity(&verifier_solidity);
     let verifier_creation_code_size = verifier_creation_code.len();
 
-    let mut evm = Evm::unlimited();
+    let mut evm = Evm::default();
     let (verifier_address, _gas_cost) = evm.create(verifier_creation_code);
     let verifier_runtime_code_size = evm.code_size(verifier_address);
 
@@ -177,7 +177,7 @@ mod halo2 {
     pub fn create_testdata_bdfg21<C: TestCircuit<bn256::Fr>>(
         k: u32,
         acc_encoding: Option<AccumulatorEncoding>,
-        mut rng: impl RngCore + Clone,
+        mut rng: impl RngCore + Clone + Sync + Send,
     ) -> (
         ParamsKZG<bn256::Bn256>,
         VerifyingKey<bn256::G1Affine>,
@@ -228,8 +228,9 @@ mod halo2 {
     where
         M: MultiMillerLoop,
         M::G1Affine: CurveAffine<ScalarExt = M::Fr>,
-        <M::G1Affine as CurveAffine>::Base: PrimeField<Repr = [u8; 0x20]>,
-        M::Fr: PrimeField<Repr = [u8; 0x20]>,
+        <M::G1Affine as CurveAffine>::Base:
+            PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
+        M::Fr: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
     {
         let s = M::Fr::random(&mut rng);
         let g1 = M::G1Affine::generator();
@@ -254,8 +255,8 @@ mod halo2 {
     fn ec_point_to_limbs<C>(ec_point: impl Borrow<C>, num_limb_bits: usize) -> Vec<C::Scalar>
     where
         C: CurveAffine,
-        C::Base: PrimeField<Repr = [u8; 0x20]>,
-        C::Scalar: PrimeField<Repr = [u8; 0x20]>,
+        C::Base: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
+        C::Scalar: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
     {
         let coords = ec_point.borrow().coordinates().unwrap();
         [*coords.x(), *coords.y()]
@@ -266,10 +267,11 @@ mod halo2 {
 
     fn fe_to_limbs<F1, F2>(fe: impl Borrow<F1>, num_limb_bits: usize) -> Vec<F2>
     where
-        F1: PrimeField<Repr = [u8; 0x20]>,
-        F2: PrimeField<Repr = [u8; 0x20]>,
+        F1: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
+        F2: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
     {
-        let big = U256::from_le_bytes(fe.borrow().to_repr());
+        #[allow(clippy::clone_on_copy)]
+        let big = U256::from_le_bytes(fe.borrow().to_repr().inner().clone());
         let mask = &((U256::from(1) << num_limb_bits) - U256::from(1));
         (0usize..)
             .step_by(num_limb_bits)
@@ -280,10 +282,10 @@ mod halo2 {
 
     fn fe_from_u256<F>(u256: impl Borrow<U256>) -> F
     where
-        F: PrimeField<Repr = [u8; 0x20]>,
+        F: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
     {
         let bytes = u256.borrow().to_le_bytes::<32>();
-        F::from_repr_vartime(bytes).unwrap()
+        F::from_repr_vartime(bytes.into()).unwrap()
     }
 
     pub mod huge {
@@ -315,9 +317,11 @@ mod halo2 {
         where
             M: MultiMillerLoop,
             M::G1Affine: CurveAffine<ScalarExt = M::Fr>,
-            <M::G1Affine as CurveAffine>::ScalarExt: PrimeField<Repr = [u8; 0x20]>,
-            <M::G1Affine as CurveAffine>::Base: PrimeField<Repr = [u8; 0x20]>,
-            M::Fr: PrimeField<Repr = [u8; 0x20]>,
+            <M::G1Affine as CurveAffine>::ScalarExt:
+                PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
+            <M::G1Affine as CurveAffine>::Base:
+                PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
+            M::Fr: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
         {
             fn min_k() -> u32 {
                 6
@@ -351,8 +355,6 @@ mod halo2 {
                 Column<Instance>,
             );
             type FloorPlanner = SimpleFloorPlanner;
-            #[cfg(feature = "halo2_circuit_params")]
-            type Params = ();
 
             fn without_witnesses(&self) -> Self {
                 unimplemented!()
@@ -550,9 +552,11 @@ mod halo2 {
         where
             M: MultiMillerLoop,
             M::G1Affine: CurveAffine<ScalarExt = M::Fr>,
-            <M::G1Affine as CurveAffine>::ScalarExt: PrimeField<Repr = [u8; 0x20]>,
-            <M::G1Affine as CurveAffine>::Base: PrimeField<Repr = [u8; 0x20]>,
-            M::Fr: PrimeField<Repr = [u8; 0x20]>,
+            <M::G1Affine as CurveAffine>::ScalarExt:
+                PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
+            <M::G1Affine as CurveAffine>::Base:
+                PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
+            M::Fr: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
         {
             fn min_k() -> u32 {
                 9
@@ -580,8 +584,6 @@ mod halo2 {
         {
             type Config = MainGateWithRangeConfig;
             type FloorPlanner = SimpleFloorPlanner;
-            #[cfg(feature = "halo2_circuit_params")]
-            type Params = ();
 
             fn without_witnesses(&self) -> Self {
                 unimplemented!()

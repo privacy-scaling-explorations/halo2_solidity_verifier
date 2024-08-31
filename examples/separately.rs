@@ -76,7 +76,7 @@ fn create_proof_checked(
     pk: &ProvingKey<G1Affine>,
     circuit: impl Circuit<Fr>,
     instances: &[Fr],
-    mut rng: impl RngCore,
+    mut rng: impl RngCore + Send + Sync,
 ) -> Vec<u8> {
     use halo2_proofs::{
         poly::kzg::{

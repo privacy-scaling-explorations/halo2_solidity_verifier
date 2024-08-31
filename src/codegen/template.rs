@@ -11,11 +11,6 @@ use super::{
     evaluator::{GateDataEncoded, LookupsDataEncoded, PermutationDataEncoded},
     pcs::PcsDataEncoded,
 };
-// Renderable trait for rendering logic
-pub(crate) trait Renderable {
-    fn render(&self, writer: &mut dyn fmt::Write) -> Result<(), fmt::Error>;
-}
-
 #[derive(Template)]
 #[template(path = "Halo2VerifyingKey.sol")]
 pub(crate) struct Halo2VerifyingKey {

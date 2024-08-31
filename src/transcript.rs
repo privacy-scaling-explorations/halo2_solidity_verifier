@@ -37,12 +37,12 @@ impl<C, S> Keccak256Transcript<C, S> {
 pub struct ChallengeEvm<C>(C::Scalar)
 where
     C: CurveAffine,
-    C::Scalar: PrimeField<Repr = [u8; 0x20]>;
+    C::Scalar: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>;
 
 impl<C> EncodedChallenge<C> for ChallengeEvm<C>
 where
     C: CurveAffine,
-    C::Scalar: PrimeField<Repr = [u8; 0x20]>,
+    C::Scalar: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
 {
     type Input = [u8; 0x20];
 
@@ -58,7 +58,7 @@ where
 impl<C, S> Transcript<C, ChallengeEvm<C>> for Keccak256Transcript<C, S>
 where
     C: CurveAffine,
-    C::Scalar: PrimeField<Repr = [u8; 0x20]>,
+    C::Scalar: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
 {
     fn squeeze_challenge(&mut self) -> ChallengeEvm<C> {
         let buf_len = self.buf.len();
@@ -95,7 +95,7 @@ where
 impl<C, R: Read> TranscriptRead<C, ChallengeEvm<C>> for Keccak256Transcript<C, R>
 where
     C: CurveAffine,
-    C::Scalar: PrimeField<Repr = [u8; 0x20]>,
+    C::Scalar: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
 {
     fn read_point(&mut self) -> io::Result<C> {
         let mut reprs = [<C::Base as PrimeField>::Repr::default(); 2];
@@ -121,7 +121,7 @@ where
         let mut data = [0; 0x20];
         self.stream.read_exact(data.as_mut())?;
         data.reverse();
-        let scalar = C::Scalar::from_repr_vartime(data)
+        let scalar = C::Scalar::from_repr_vartime(data.into())
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Invalid scalar".to_string()))?;
         Transcript::<C, ChallengeEvm<C>>::common_scalar(self, scalar)?;
         Ok(scalar)
@@ -131,7 +131,7 @@ where
 impl<C, R: Read> TranscriptReadBuffer<R, C, ChallengeEvm<C>> for Keccak256Transcript<C, R>
 where
     C: CurveAffine,
-    C::Scalar: PrimeField<Repr = [u8; 0x20]>,
+    C::Scalar: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
 {
     fn init(reader: R) -> Self {
         Keccak256Transcript::new(reader)
@@ -141,7 +141,7 @@ where
 impl<C, W: Write> TranscriptWrite<C, ChallengeEvm<C>> for Keccak256Transcript<C, W>
 where
     C: CurveAffine,
-    C::Scalar: PrimeField<Repr = [u8; 0x20]>,
+    C::Scalar: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
 {
     fn write_point(&mut self, ec_point: C) -> io::Result<()> {
         self.common_point(ec_point)?;
@@ -165,7 +165,7 @@ where
 impl<C, W: Write> TranscriptWriterBuffer<W, C, ChallengeEvm<C>> for Keccak256Transcript<C, W>
 where
     C: CurveAffine,
-    C::Scalar: PrimeField<Repr = [u8; 0x20]>,
+    C::Scalar: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
 {
     fn init(writer: W) -> Self {
         Keccak256Transcript::new(writer)
@@ -178,15 +178,17 @@ where
 
 fn u256_to_fe<F>(value: U256) -> F
 where
-    F: PrimeField<Repr = [u8; 0x20]>,
+    F: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
 {
     let value = value % modulus::<F>();
-    F::from_repr(value.to_le_bytes::<0x20>()).unwrap()
+    F::from_repr(value.to_le_bytes::<0x20>().into()).unwrap()
 }
 
 fn modulus<F>() -> U256
 where
-    F: PrimeField<Repr = [u8; 0x20]>,
+    F: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
 {
-    U256::from_le_bytes((-F::ONE).to_repr()) + U256::from(1)
+    #[allow(clippy::clone_on_copy)]
+    let upper = U256::from_le_bytes((-F::ONE).to_repr().inner().clone());
+    upper + U256::from(1)
 }

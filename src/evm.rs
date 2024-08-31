@@ -51,9 +51,9 @@ pub(crate) mod test {
     pub use revm;
     use revm::{
         primitives::{
-            Address, CfgEnv, CreateScheme, Env, ExecutionResult, Output, TransactTo, TxEnv,
+            Address, CfgEnv, CfgEnvWithHandlerCfg, ExecutionResult, Output, TransactTo, TxEnv,
         },
-        InMemoryDB, EVM,
+        Evm as EVM, InMemoryDB,
     };
     use std::{
         fmt::{self, Debug, Formatter},
@@ -108,38 +108,30 @@ pub(crate) mod test {
     }
 
     /// Evm runner.
-    pub struct Evm {
-        evm: EVM<InMemoryDB>,
+    pub struct Evm<'a> {
+        evm: EVM<'a, (), InMemoryDB>,
     }
 
-    impl Debug for Evm {
+    impl Debug for Evm<'_> {
         fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-            let mut debug_struct = f.debug_struct("Evm");
-            debug_struct
-                .field("env", &self.evm.env)
-                .field("db", &self.evm.db.as_ref().unwrap())
-                .finish()
+            self.evm.fmt(f)
         }
     }
 
-    impl Default for Evm {
+    impl Default for Evm<'_> {
         fn default() -> Self {
-            Self {
-                evm: EVM {
-                    env: Default::default(),
-                    db: Some(Default::default()),
-                },
-            }
+            let evm = EVM::builder().with_db(InMemoryDB::default()).build();
+            Self { evm }
         }
     }
 
-    impl Evm {
+    impl Evm<'_> {
         /// Return code_size of given address.
         ///
         /// # Panics
         /// Panics if given address doesn't have bytecode.
         pub fn code_size(&mut self, address: Address) -> usize {
-            self.evm.db.as_ref().unwrap().accounts[&address]
+            self.evm.db().accounts[&address]
                 .info
                 .code
                 .as_ref()
@@ -149,17 +141,16 @@ pub(crate) mod test {
 
         /// Return a version of the evm that allows for unlimited deployments sizes.
         pub fn unlimited() -> Self {
-            let mut cfg: CfgEnv = Default::default();
-            cfg.limit_contract_code_size = Some(usize::MAX);
-            Self {
-                evm: EVM {
-                    env: Env {
-                        cfg,
-                        ..Default::default()
-                    },
-                    db: Some(Default::default()),
-                },
-            }
+            let mut cfg_env: CfgEnv = Default::default();
+            cfg_env.limit_contract_code_size = Some(usize::MAX);
+            let evm = EVM::builder()
+                .with_db(InMemoryDB::default())
+                .with_cfg_env_with_handler_cfg(CfgEnvWithHandlerCfg {
+                    cfg_env,
+                    handler_cfg: Default::default(),
+                })
+                .build();
+            Self { evm }
         }
 
         /// Apply create transaction with given `bytecode` as creation bytecode.
@@ -170,7 +161,7 @@ pub(crate) mod test {
         pub fn create(&mut self, bytecode: Vec<u8>) -> (Address, u64) {
             let (gas_used, output) = self.transact_success_or_panic(TxEnv {
                 gas_limit: u64::MAX,
-                transact_to: TransactTo::Create(CreateScheme::Create),
+                transact_to: TransactTo::Create,
                 data: bytecode.into(),
                 ..Default::default()
             });
@@ -199,9 +190,9 @@ pub(crate) mod test {
         }
 
         fn transact_success_or_panic(&mut self, tx: TxEnv) -> (u64, Output) {
-            self.evm.env.tx = tx;
+            self.evm.context.evm.env.tx = tx;
             let result = self.evm.transact_commit().unwrap();
-            self.evm.env.tx = Default::default();
+            self.evm.context.evm.env.tx = Default::default();
             match result {
                 ExecutionResult::Success {
                     gas_used,
@@ -213,7 +204,7 @@ pub(crate) mod test {
                         println!("--- logs from {} ---", logs[0].address);
                         for (log_idx, log) in logs.iter().enumerate() {
                             println!("log#{log_idx}");
-                            for (topic_idx, topic) in log.topics.iter().enumerate() {
+                            for (topic_idx, topic) in log.topics().iter().enumerate() {
                                 println!("  topic{topic_idx}: {topic:?}");
                             }
                         }

@@ -26,7 +26,7 @@ pub(crate) struct EvaluatorStatic<'a, F: PrimeField> {
 
 impl<'a, F> EvaluatorStatic<'a, F>
 where
-    F: PrimeField<Repr = [u8; 0x20]>,
+    F: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
 {
     pub(crate) fn new(
         cs: &'a ConstraintSystem<F>,
@@ -583,7 +583,7 @@ pub(crate) struct EvaluatorDynamic<'a, F: PrimeField> {
 
 impl<'a, F> EvaluatorDynamic<'a, F>
 where
-    F: PrimeField<Repr = [u8; 0x20]>,
+    F: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
 {
     pub(crate) fn new(
         cs: &'a ConstraintSystem<F>,
@@ -1203,7 +1203,7 @@ fn evaluate<F, T>(
     scaled: &impl Fn(T, U256) -> T,
 ) -> T
 where
-    F: PrimeField<Repr = [u8; 0x20]>,
+    F: PrimeField<Repr = halo2_proofs::halo2curves::serde::Repr<32>>,
 {
     let evaluate = |expr: &Expression<F>| {
         evaluate(
