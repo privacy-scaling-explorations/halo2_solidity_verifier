@@ -721,6 +721,14 @@ contract Halo2VerifierReusable {
                 let num_instances := mload(add(vk_mptr,{{ vk_const_offsets["num_instances"]|hex() }}))
                 success := and(success, eq(num_instances, calldataload(sub(instance_cptr,0x20))))
 
+                let proof_cptr := PROOF_CPTR
+                let num_evals := mul(0x20, mload(add(vk_mptr, {{ vk_const_offsets["num_evals"]|hex() }})))
+                
+                let challenge_mptr := add(vk_mptr, vk_len) // challenge_mptr is at the end of vk in memory
+                // Set the theta_mptr (vk_mptr + vk_len + challenges_length)
+                theta_mptr := add(challenge_mptr, mload(add(vk_mptr, {{ vk_const_offsets["challenges_offset"]|hex() }})))
+                let challenge_len_ptr := add(vk_mptr, mload(add(vk_mptr, {{ vk_const_offsets["num_advices_user_challenges_offset"]|hex() }})))
+
                 // Read instances and witness commitments and generate challenges
                 let hash_mptr := 0x20
                 for
@@ -734,12 +742,6 @@ contract Halo2VerifierReusable {
                     instance_cptr := add(instance_cptr, 0x20)
                     hash_mptr := add(hash_mptr, 0x20)
                 }
-
-                let proof_cptr := PROOF_CPTR
-                let challenge_mptr := add(vk_mptr, vk_len) // challenge_mptr is at the end of vk in memory
-                // Set the theta_mptr (vk_mptr + vk_len + challenges_length)
-                theta_mptr := add(challenge_mptr, mload(add(vk_mptr, {{ vk_const_offsets["challenges_offset"]|hex() }})))
-                let challenge_len_ptr := add(vk_mptr, mload(add(vk_mptr, {{ vk_const_offsets["num_advices_user_challenges_offset"]|hex() }})))
                 
                 let challenge_len_data := mload(challenge_len_ptr)
                 let num_words := and(challenge_len_data, BYTE_FLAG_BITMASK)
@@ -769,7 +771,7 @@ contract Halo2VerifierReusable {
 
                 // Read evaluations
                 for
-                    { let proof_cptr_end := add(proof_cptr, mul(0x20, mload(add(vk_mptr, {{ vk_const_offsets["num_evals"]|hex() }})))) } // num_evals
+                    { let proof_cptr_end := add(proof_cptr, num_evals) } // num_evals
                     lt(proof_cptr, proof_cptr_end)
                     {}
                 {
@@ -795,7 +797,7 @@ contract Halo2VerifierReusable {
                 // TODO
                 {%- endmatch %}
 
-                // Copy full vk into memory
+                // Copy full vk into memory (some parts were overwritten during the challenge generation)
                 extcodecopy(vk, vk_mptr, 0x00, vk_len)
 
                 // Read accumulator from instances
