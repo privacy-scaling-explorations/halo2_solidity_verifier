@@ -48,9 +48,9 @@ contract Halo2VerifierReusable {
             }
 
             // Squeeze challenge without absorbing new input from calldata,
-            // by putting an extra 0x01 in memory[0x20] and squeeze by keccak256(memory[0..21]),
+            // by putting an extra 0x01 in memory[0x240] and squeeze by keccak256(memory[0..21]),
             // and store hash mod r as challenge in challenge_mptr,
-            // and push back hash in 0x00 as the first input for next squeeze.
+            // and push back hash in 0x220 as the first input for next squeeze.
             // Return updated (challenge_mptr).
             function squeeze_challenge_cont(challenge_mptr) -> ret {
                 mstore8(0x20, 0x01)
@@ -153,6 +153,21 @@ contract Halo2VerifierReusable {
                 mstore(0x160, mload(add(vk_mptr, {{ vk_const_offsets["neg_s_g2_y_2"]|hex() }})))
                 ret := and(success, staticcall(gas(), 0x08, 0x00, 0x180, 0x00, 0x20))
                 ret := and(ret, mload(0x00))
+            }
+
+            function reposition_challenge_len_data() -> ret0, ret1, ret2 {
+                let fsm_challenges := mload({{ vk_const_offsets["fsm_challenges"]|hex() }})
+                let challenge_len_ptr := {{ vk_const_offsets["num_advices_user_challenges_0"]|hex() }}
+                let challenge_len_data := mload(challenge_len_ptr)
+                let num_words := and(challenge_len_data, BYTE_FLAG_BITMASK)
+                ret0 := num_words
+                num_words := mul(0x20, num_words)
+                challenge_len_data := shr(8, challenge_len_data)
+                for { let i := 0x20 } lt(i, num_words) { i := add(i, 0x20) } {
+                    mstore(add(fsm_challenges, i), mload(add(challenge_len_ptr, i)))
+                }
+                ret1 := fsm_challenges
+                ret2 := challenge_len_data
             }
 
             // Returns start of computaions ptr and length of SoA layout memory
@@ -316,7 +331,7 @@ contract Halo2VerifierReusable {
                 ret0, ret1, ret2 := expression_evals_packed(fsmp, code_ptr, expressions_word)
             }
 
-            function  mv_lookup_evals(table, evals_ptr, quotient_eval_numer, y) -> ret0, ret1, ret2 {
+            function mv_lookup_evals(table, evals_ptr, quotient_eval_numer, y) -> ret0, ret1, ret2 {
                 // iterate through the input_tables_len
                 let evals := mload(evals_ptr)
                 // We store a boolean flag in the first LSG byte of the evals ptr to determine if we need to load in a new table or reuse the previous table.
@@ -704,33 +719,36 @@ contract Halo2VerifierReusable {
             // Initialize theta_mptr as 0x0 on the stack
             let theta_mptr := 0x0
             {
-                // Load in the vk_digest, vk_mptr and vk_len
-                extcodecopy(vk, 0x0, 0x00, 0x60)
+                // Load in the vk_digest, vk_mptr and vk_len and the rest of the constants needed for the 
+                // challenge data generation process.
+                extcodecopy(vk, 0x0, 0x00, 0x240)
                 // Set the vk_mptr 
                 vk_mptr := mload(0x20)
                 let vk_len := mload(0x40)
-                // Copy full vk into memory
-                extcodecopy(vk, vk_mptr, 0x00, vk_len)
 
-                let instance_cptr := mload(add(vk_mptr, {{ vk_const_offsets["instance_cptr"]|hex() }}))
+                let instance_cptr := mload({{ vk_const_offsets["instance_cptr"]|hex() }})
 
                 // Check valid length of proof
                 success := and(success, eq(sub(instance_cptr, 0xa4), calldataload(PROOF_LEN_CPTR)))
 
                 // Check valid length of instances
-                let num_instances := mload(add(vk_mptr,{{ vk_const_offsets["num_instances"]|hex() }}))
+                let num_instances := mload({{ vk_const_offsets["num_instances"]|hex() }})
                 success := and(success, eq(num_instances, calldataload(sub(instance_cptr,0x20))))
 
-                let proof_cptr := PROOF_CPTR
-                let num_evals := mul(0x20, mload(add(vk_mptr, {{ vk_const_offsets["num_evals"]|hex() }})))
-                
-                let challenge_mptr := add(vk_mptr, vk_len) // challenge_mptr is at the end of vk in memory
-                // Set the theta_mptr (vk_mptr + vk_len + challenges_length)
-                theta_mptr := add(challenge_mptr, mload(add(vk_mptr, {{ vk_const_offsets["challenges_offset"]|hex() }})))
-                let challenge_len_ptr := add(vk_mptr, mload(add(vk_mptr, {{ vk_const_offsets["num_advices_user_challenges_offset"]|hex() }})))
 
                 // Read instances and witness commitments and generate challenges
                 let hash_mptr := 0x20
+
+                let proof_cptr := PROOF_CPTR
+                let challenge_mptr := add(vk_mptr, vk_len) // challenge_mptr is at the end of vk in memory
+                // Set the theta_mptr (vk_mptr + vk_len + challenges_length)
+                theta_mptr := add(challenge_mptr, mload({{ vk_const_offsets["challenges_offset"]|hex() }}))
+
+                // Move the challenge length data to the free static memory location for the challenge data generation process.
+                let num_words, challenge_len_ptr, challenge_len_data := reposition_challenge_len_data()
+                
+                let num_evals := mul(0x20, mload({{ vk_const_offsets["num_evals"]|hex() }}))
+
                 for
                     { let instance_cptr_end := add(instance_cptr, mul(0x20, num_instances)) }
                     lt(instance_cptr, instance_cptr_end)
@@ -743,10 +761,8 @@ contract Halo2VerifierReusable {
                     hash_mptr := add(hash_mptr, 0x20)
                 }
                 
-                let challenge_len_data := mload(challenge_len_ptr)
-                let num_words := and(challenge_len_data, BYTE_FLAG_BITMASK)
-                challenge_len_data := shr(8, challenge_len_data)
                 for { let i := 0 } lt(i, num_words) { i := add(i, 1) } {
+                    challenge_len_ptr := add(challenge_len_ptr, 0x20)
                     for { } challenge_len_data { } {
                         // add proof_cpt to num advices len
                         let proof_cptr_end := add(proof_cptr, and(challenge_len_data, PTR_BITMASK))
@@ -765,7 +781,6 @@ contract Halo2VerifierReusable {
                             challenge_mptr := squeeze_challenge_cont(challenge_mptr)
                         }
                     }
-                    challenge_len_ptr := add(challenge_len_ptr, 0x20)
                     challenge_len_data := mload(challenge_len_ptr)
                 }
 

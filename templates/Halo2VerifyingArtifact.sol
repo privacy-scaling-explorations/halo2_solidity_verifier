@@ -22,11 +22,7 @@ contract Halo2VerifyingArtifact {
             {%- for const in const_expressions %}
             mstore({{ (32 * (offset_2 + loop.index0))|hex_padded(4) }}, {{ const|hex_padded(64) }}) // const_expressions[{{ loop.index0 }}]
             {%- endfor %}
-            {%- let offset_3 = offset_2 + const_expressions.len() %}
-            {%- for word in num_advices_user_challenges %}
-            mstore({{ (32 * (offset_3 + loop.index0))|hex_padded(4) }}, {{ word|hex_padded(64) }}) // num_advices_challenges[{{ loop.index0 }}]
-            {%- endfor %}
-            {%- let offset_4 = offset_3 + num_advices_user_challenges.len() %}
+            {%- let offset_4 = offset_2 + const_expressions.len() %}
             mstore({{ (32 * offset_4)|hex_padded(4) }}, {{ (32 * gate_computations.length)|hex_padded(64) }}) // gate_computations length
             {%- let offset_5 = offset_4 + 1 %}
             {%- for packed_expression_word in gate_computations.packed_expression_words %}

@@ -35,7 +35,6 @@ impl Halo2VerifyingKey {
 #[template(path = "Halo2VerifyingArtifact.sol")]
 pub(crate) struct Halo2VerifyingArtifact {
     pub(crate) constants: Vec<(&'static str, U256)>,
-    pub(crate) num_advices_user_challenges: Vec<U256>,
     pub(crate) fixed_comms: Vec<(U256, U256)>,
     pub(crate) permutation_comms: Vec<(U256, U256)>,
     pub(crate) const_expressions: Vec<U256>,
@@ -50,7 +49,6 @@ impl Halo2VerifyingArtifact {
         let len = self.constants.len()
             + (self.fixed_comms.len() + self.permutation_comms.len()) * 2
             + self.const_expressions.len()
-            + self.num_advices_user_challenges.len()
             + self.gate_computations.len()
             + self.permutation_computations.len()
             + self.lookup_computations.len()

@@ -31,6 +31,20 @@ pub(crate) mod util;
 
 pub use pcs::BatchOpenScheme;
 
+// Maximum capacity of 10 words allocated for the num_advices_user_challenges encoded data.
+const NUM_ADVICES_USER_CHALLENGES_LABELS: [&str; 10] = [
+    "num_advices_user_challenges_0",
+    "num_advices_user_challenges_1",
+    "num_advices_user_challenges_2",
+    "num_advices_user_challenges_3",
+    "num_advices_user_challenges_4",
+    "num_advices_user_challenges_5",
+    "num_advices_user_challenges_6",
+    "num_advices_user_challenges_7",
+    "num_advices_user_challenges_8",
+    "num_advices_user_challenges_9",
+];
+
 /// Solidity verifier generator for [`halo2`] proof with KZG polynomial commitment scheme on BN254.
 #[derive(Debug)]
 pub struct SolidityGenerator<'a> {
@@ -171,74 +185,108 @@ impl<'a> SolidityGenerator<'a> {
         Ok((verifier_output, vk_output))
     }
 
-    fn dummy_vk_constants(separate: bool) -> Vec<(&'static str, U256)> {
-        if separate {
-            vec![
-                ("vk_digest", U256::from(0)),
-                ("vk_mptr", U256::from(0)),
-                ("vk_len", U256::from(0)),
-                ("num_instances", U256::from(0)),
-                ("k", U256::from(0)),
-                ("n_inv", U256::from(0)),
-                ("omega", U256::from(0)),
-                ("omega_inv", U256::from(0)),
-                ("omega_inv_to_l", U256::from(0)),
-                ("has_accumulator", U256::from(0)),
-                ("acc_offset", U256::from(0)),
-                ("num_acc_limbs", U256::from(0)),
-                ("num_acc_limb_bits", U256::from(0)),
-                ("g1_x", U256::from(0)),
-                ("g1_y", U256::from(0)),
-                ("g2_x_1", U256::from(0)),
-                ("g2_x_2", U256::from(0)),
-                ("g2_y_1", U256::from(0)),
-                ("g2_y_2", U256::from(0)),
-                ("neg_s_g2_x_1", U256::from(0)),
-                ("neg_s_g2_x_2", U256::from(0)),
-                ("neg_s_g2_y_1", U256::from(0)),
-                ("neg_s_g2_y_2", U256::from(0)),
-                ("num_advices_user_challenges_offset", U256::from(0)),
-                ("last_quotient_x_cptr", U256::from(0)),
-                ("first_quotient_x_cptr", U256::from(0)),
-                ("instance_cptr", U256::from(0)),
-                ("challenges_offset", U256::from(0)),
-                ("gate_computations_len_offset", U256::from(0)),
-                ("permutation_computations_len_offset", U256::from(0)),
-                ("lookup_computations_len_offset", U256::from(0)),
-                ("pcs_computations_len_offset", U256::from(0)),
-                ("num_evals", U256::from(0)),
-                ("num_neg_lagranges", U256::from(0)),
-            ]
-        } else {
-            vec![
-                ("vk_digest", U256::from(0)),
-                ("num_instances", U256::from(0)),
-                ("k", U256::from(0)),
-                ("n_inv", U256::from(0)),
-                ("omega", U256::from(0)),
-                ("omega_inv", U256::from(0)),
-                ("omega_inv_to_l", U256::from(0)),
-                ("has_accumulator", U256::from(0)),
-                ("acc_offset", U256::from(0)),
-                ("num_acc_limbs", U256::from(0)),
-                ("num_acc_limb_bits", U256::from(0)),
-                ("g1_x", U256::from(0)),
-                ("g1_y", U256::from(0)),
-                ("g2_x_1", U256::from(0)),
-                ("g2_x_2", U256::from(0)),
-                ("g2_y_1", U256::from(0)),
-                ("g2_y_2", U256::from(0)),
-                ("neg_s_g2_x_1", U256::from(0)),
-                ("neg_s_g2_x_2", U256::from(0)),
-                ("neg_s_g2_y_1", U256::from(0)),
-                ("neg_s_g2_y_2", U256::from(0)),
-            ]
-        }
+    fn dummy_vka_constants(&self) -> Vec<(&'static str, U256)> {
+        // Number of words the num_advices_user_challenges will take up.
+        let num_advices_len = self.meta.num_advices().len();
+        let slots = 10;
+        let num_advices_user_challenges_capacity =
+            num_advices_len / slots + if num_advices_len % slots == 0 { 0 } else { 1 };
+
+        // assert that the predefined_labels length are less than the num_advices_user_challenges_capacity
+        assert!(
+            NUM_ADVICES_USER_CHALLENGES_LABELS.len() >= num_advices_user_challenges_capacity,
+            "predefined_labels length of 10 must be less than or equal to num_advices_user_challenges_capacity"
+        );
+
+        let mut constants = vec![
+            ("vk_digest", U256::from(0)),
+            ("vk_mptr", U256::from(0)),
+            ("vk_len", U256::from(0)),
+            ("instance_cptr", U256::from(0)),
+            ("num_instances", U256::from(0)),
+            ("num_evals", U256::from(0)),
+            ("challenges_offset", U256::from(0)),
+            ("fsm_challenges", U256::from(0)), // The fsm position that we can move the num_advices_user_challenges to.
+            ("k", U256::from(0)),
+            ("n_inv", U256::from(0)),
+            ("omega", U256::from(0)),
+            ("omega_inv", U256::from(0)),
+            ("omega_inv_to_l", U256::from(0)),
+            ("has_accumulator", U256::from(0)),
+            ("acc_offset", U256::from(0)),
+            ("num_acc_limbs", U256::from(0)),
+            ("num_acc_limb_bits", U256::from(0)),
+            ("g1_x", U256::from(0)),
+            ("g1_y", U256::from(0)),
+            ("g2_x_1", U256::from(0)),
+            ("g2_x_2", U256::from(0)),
+            ("g2_y_1", U256::from(0)),
+            ("g2_y_2", U256::from(0)),
+            ("neg_s_g2_x_1", U256::from(0)),
+            ("neg_s_g2_x_2", U256::from(0)),
+            ("neg_s_g2_y_1", U256::from(0)),
+            ("neg_s_g2_y_2", U256::from(0)),
+            ("last_quotient_x_cptr", U256::from(0)),
+            ("first_quotient_x_cptr", U256::from(0)),
+            ("gate_computations_len_offset", U256::from(0)),
+            ("permutation_computations_len_offset", U256::from(0)),
+            ("lookup_computations_len_offset", U256::from(0)),
+            ("pcs_computations_len_offset", U256::from(0)),
+            ("num_neg_lagranges", U256::from(0)),
+        ];
+        // Find the index of "fsm_challenges" and insert after it.
+        let fsm_challenges_index = constants
+            .iter()
+            .position(|(label, _)| *label == "fsm_challenges")
+            .unwrap();
+
+        // Create a vector of tuples with the num_advices_user_challenges elements.
+        let advices_entries: Vec<(&str, U256)> = (0..num_advices_user_challenges_capacity)
+            .map(|i| (NUM_ADVICES_USER_CHALLENGES_LABELS[i], U256::from(0)))
+            .collect();
+
+        // Insert the num_advices_user_challenges after the "fsm_challenges".
+        constants.splice(
+            fsm_challenges_index + 1..fsm_challenges_index + 1,
+            advices_entries,
+        );
+
+        constants
+    }
+
+    fn dummy_vk_constants() -> Vec<(&'static str, U256)> {
+        vec![
+            ("vk_digest", U256::from(0)),
+            ("num_instances", U256::from(0)),
+            ("k", U256::from(0)),
+            ("n_inv", U256::from(0)),
+            ("omega", U256::from(0)),
+            ("omega_inv", U256::from(0)),
+            ("omega_inv_to_l", U256::from(0)),
+            ("has_accumulator", U256::from(0)),
+            ("acc_offset", U256::from(0)),
+            ("num_acc_limbs", U256::from(0)),
+            ("num_acc_limb_bits", U256::from(0)),
+            ("g1_x", U256::from(0)),
+            ("g1_y", U256::from(0)),
+            ("g2_x_1", U256::from(0)),
+            ("g2_x_2", U256::from(0)),
+            ("g2_y_1", U256::from(0)),
+            ("g2_y_2", U256::from(0)),
+            ("neg_s_g2_x_1", U256::from(0)),
+            ("neg_s_g2_x_2", U256::from(0)),
+            ("neg_s_g2_y_1", U256::from(0)),
+            ("neg_s_g2_y_2", U256::from(0)),
+        ]
     }
 
     fn generate_vk(&self, reusable: bool) -> Halo2VerifyingKey {
         // Get the dummy constants using the new function
-        let mut constants = Self::dummy_vk_constants(reusable);
+        let mut constants = if reusable {
+            self.dummy_vka_constants()
+        } else {
+            Self::dummy_vk_constants()
+        };
 
         // Fill in the actual values where applicable
         let domain = self.vk.get_domain();
@@ -387,6 +435,9 @@ impl<'a> SolidityGenerator<'a> {
             .copied()
             .collect::<Vec<_>>();
 
+        let mut fsm_challenges = 0x20 * (1 + self.num_instances); // initialize fsm_challenges with the space that loading the instances into memory will take up.
+        let mut max_advices_value = 0; // Initialize variable to track the maximum value of *num_advices * 0x40
+
         let num_advices_user_challenges: Vec<U256> = {
             let mut packed_words: Vec<U256> = vec![U256::from(0)];
             let mut bit_counter = 8;
@@ -401,17 +452,25 @@ impl<'a> SolidityGenerator<'a> {
                     packed_words.push(U256::from(0));
                     bit_counter = 0;
                 }
-                // Ensure that the packed num_advices and num_user_challenges data doesn't
-                // overflow.
+
+                let advices_value = *num_advices * 0x40;
+
+                // Ensure that the packed num_advices and num_user_challenges data doesn't overflow.
                 assert!(
-                    (*num_advices * 0x40) < 0x10000,
+                    advices_value < 0x10000,
                     "num_advices * 0x40 must be less than 0x10000"
                 );
                 assert!(
                     *num_user_challenges < 0x100,
                     "num_user_challenges must be less than 0x100"
                 );
-                packed_words[last_idx] |= U256::from(*num_advices * 0x40) << bit_counter;
+
+                // Track the maximum value of *num_advices * 0x40
+                if advices_value > max_advices_value {
+                    max_advices_value = advices_value;
+                }
+
+                packed_words[last_idx] |= U256::from(advices_value) << bit_counter;
                 bit_counter += 16;
                 packed_words[last_idx] |= U256::from(*num_user_challenges) << bit_counter;
                 bit_counter += 8;
@@ -422,20 +481,37 @@ impl<'a> SolidityGenerator<'a> {
             packed_words
         };
 
+        fsm_challenges += max_advices_value;
+
+        // Iterate through the `num_advices_user_challenges` and update corresponding values in `constants`
+        for (i, value) in num_advices_user_challenges.iter().enumerate() {
+            if i >= NUM_ADVICES_USER_CHALLENGES_LABELS.len() {
+                panic!("word capacity for num_advices_user_challenges encoded vka data must be less than or equal to 10")
+            }
+            set_constant_value(
+                &mut dummy_vk.constants,
+                NUM_ADVICES_USER_CHALLENGES_LABELS[i],
+                *value,
+            );
+        }
+
         // Update constants
         let first_quotient_x_cptr = dummy_data.quotient_comm_cptr;
         let last_quotient_x_cptr = first_quotient_x_cptr + 2 * (self.meta.num_quotients - 1);
         let instance_cptr = U256::from(self.meta.proof_len(self.scheme) + 0xa4);
-        let num_advices_user_challenges_offset =
-            dummy_vk.len(true) + (const_expressions.len() * 0x20);
-        let gate_computations_len_offset =
-            num_advices_user_challenges_offset + (num_advices_user_challenges.len() * 0x20);
+        let gate_computations_len_offset = dummy_vk.len(true) + (const_expressions.len() * 0x20);
         let permutations_computations_len_offset =
             gate_computations_len_offset + (0x20 * gate_computations_dummy.len());
         let lookup_computations_len_offset =
             permutations_computations_len_offset + (0x20 * permutation_computations_dummy.len());
         let pcs_computations_len_offset =
             lookup_computations_len_offset + (0x20 * lookup_computations_dummy.len());
+
+        set_constant_value(
+            &mut dummy_vk.constants,
+            "fsm_challenges",
+            U256::from(fsm_challenges),
+        );
 
         set_constant_value(&mut dummy_vk.constants, "instance_cptr", instance_cptr);
         set_constant_value(
@@ -447,11 +523,6 @@ impl<'a> SolidityGenerator<'a> {
             &mut dummy_vk.constants,
             "last_quotient_x_cptr",
             U256::from(last_quotient_x_cptr.value().as_usize()),
-        );
-        set_constant_value(
-            &mut dummy_vk.constants,
-            "num_advices_user_challenges_offset",
-            U256::from(num_advices_user_challenges_offset),
         );
         set_constant_value(
             &mut dummy_vk.constants,
@@ -480,7 +551,6 @@ impl<'a> SolidityGenerator<'a> {
             fixed_comms: dummy_vk.fixed_comms,
             permutation_comms: dummy_vk.permutation_comms,
             const_expressions,
-            num_advices_user_challenges,
             gate_computations: gate_computations_dummy,
             permutation_computations: permutation_computations_dummy,
             lookup_computations: lookup_computations_dummy,
@@ -593,7 +663,8 @@ impl<'a> SolidityGenerator<'a> {
     }
 
     fn generate_separate_verifier(&self) -> Halo2VerifierReusable {
-        let vk_const_offsets: HashMap<&'static str, U256> = Self::dummy_vk_constants(true)
+        let vk_const_offsets: HashMap<&'static str, U256> = self
+            .dummy_vka_constants()
             .iter()
             .enumerate()
             .map(|(idx, &(key, _))| (key, U256::from(idx * 32)))
