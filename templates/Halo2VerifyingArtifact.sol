@@ -45,7 +45,7 @@ contract Halo2VerifyingArtifact {
             mstore({{ (32 * (offset + 1 + loop.index0))|hex_padded(4) }}, {{ table_line|hex_padded(64) }}) // lookup_table_line [{{ loop.index0 }}]
             {%- endfor %}
             {%- for input in lookup.inputs %}
-            {%- let offset = offset + 1 + lookup.table_lines.len() + loop.index0 + input.acc %}
+            {%- let offset = offset + 1 + lookup.table_lines.len() + input.acc %}
             {%- for expression in input.expression %}
             mstore({{ (32 * (offset + loop.index0))|hex_padded(4) }}, {{ expression|hex_padded(64) }}) // input_expression [{{ loop.index0 }}]
             {%- endfor %}

@@ -376,14 +376,16 @@ contract Halo2VerifierReusable {
                     let last_idx := sub(outer_inputs_len, 0x20)
                     for { let i := 0 } lt(i, outer_inputs_len) { i := add(i, 0x20) } {
                         let tmp := mload(0xa0)
+                        let j := 0x20
                         if eq(i, 0){
                             tmp := mload(0xc0)
+                            j := 0x40
                         }
-                        for { let j := 0 } lt(j, outer_inputs_len) { j := add(j, 0x20) } {
+                        for { } lt(j, outer_inputs_len) { j := add(j, 0x20) } {
                             if eq(i, j) {
                                 continue
                             }
-                            tmp := mulmod(tmp, mload(j), R)
+                            tmp := mulmod(tmp, mload(add(j, 0xa0)), R)
                             
                         }
                         rhs := addmod(rhs, tmp, R)
@@ -394,7 +396,7 @@ contract Halo2VerifierReusable {
                 }
                 let tmp := mload(0xa0)
                 for { let j := 0x20 } lt(j, outer_inputs_len) { j := add(j, 0x20) } {
-                    tmp := mulmod(tmp, mload(j), R)
+                    tmp := mulmod(tmp, mload(add(j, 0xa0)), R)
                 }
                 rhs := addmod(
                     rhs, 
@@ -944,7 +946,7 @@ contract Halo2VerifierReusable {
             }
 
 
-            // Compute quotient evavluation
+            // Compute quotient evaluation
             {
                 let quotient_eval_numer
                 let y := mload(add(theta_mptr, 0x60))
@@ -1346,7 +1348,7 @@ contract Halo2VerifierReusable {
             }
 
             // Random linear combine with accumulator
-            if mload(add(vk_mptr, {{ vk_const_offsets["first_quotient_x_cptr"]|hex() }})) {
+            if mload(add(vk_mptr, {{ vk_const_offsets["has_accumulator"]|hex() }})) {
                 mstore(0x00, mload(add(theta_mptr, 0x100)))
                 mstore(0x20, mload(add(theta_mptr, 0x120)))
                 mstore(0x40, mload(add(theta_mptr, 0x140)))
