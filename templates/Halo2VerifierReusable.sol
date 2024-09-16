@@ -247,7 +247,6 @@ contract Halo2VerifierReusable {
                 let a := mload(and(expressions_word, PTR_BITMASK))
                 expressions_word := shr(16, expressions_word)
                 let theta := mload(0x60) 
-                let beta := mload(0x80)
                 for { let j } lt(j, num_words_vars) { j := add(j, 0x20) } {
                     for {  } expressions_word { } {
                         a := addmod(
@@ -260,7 +259,6 @@ contract Halo2VerifierReusable {
                     ret0 := add(code_ptr, add(i, j))
                     expressions_word := mload(ret0)
                 }
-                a := addmod(a, beta, R)
                 ret1 := expressions_word
                 ret2 := a
             }
@@ -326,9 +324,13 @@ contract Halo2VerifierReusable {
                 ret2 := sub(acc, 0x20)
             }
 
-            function lookup_expr_evals_packed(fsmp, code_ptr, expressions_word) -> ret0, ret1, ret2 {
+            function lookup_expr_evals_packed(fsmp, code_ptr, expressions_word, mv) -> ret0, ret1, ret2 {
                 // expression evaluation.
                 ret0, ret1, ret2 := expression_evals_packed(fsmp, code_ptr, expressions_word)
+                if mv {
+                    // add the beta accum addmod if mv lookup
+                    ret2 := addmod(ret2, mload(0x80), R)
+                }
             }
 
             function mv_lookup_evals(table, evals_ptr, quotient_eval_numer, y) -> ret0, ret1, ret2 {
@@ -353,7 +355,7 @@ contract Halo2VerifierReusable {
                 // Due to the fact that lookups can share the previous table, we can cache it for reuse.
                 let input_expression := mload(evals_ptr)
                 if new_table {
-                    evals_ptr, input_expression, table := lookup_expr_evals_packed(0xa0, evals_ptr, mload(evals_ptr))
+                    evals_ptr, input_expression, table := lookup_expr_evals_packed(0xa0, evals_ptr, mload(evals_ptr), 0x1)
                 } 
                 // outer inputs len, stored in the first input expression word
                 let outer_inputs_len := and(input_expression, PTR_BITMASK)
@@ -362,7 +364,7 @@ contract Halo2VerifierReusable {
                 for { let j := 0xa0 } lt(j, add(outer_inputs_len, 0xa0)) { j := add(j, 0x20) } {
                     // call the expression_evals function to evaluate the input_lines
                     let ident
-                    evals_ptr, input_expression, ident := lookup_expr_evals_packed(j, evals_ptr, input_expression)
+                    evals_ptr, input_expression, ident := lookup_expr_evals_packed(j, evals_ptr, input_expression, 0x1)
                     // store ident in free static memory
                     mstore(j, ident)
                 }
@@ -419,6 +421,109 @@ contract Halo2VerifierReusable {
                         addmod(lhs, sub(R, rhs), R),
                         R
                     ), 
+                    R
+                )
+                ret0 := evals_ptr
+                ret1 := table
+                ret2 := quotient_eval_numer
+            }
+
+            function lookup_evals(table, evals_ptr, quotient_eval_numer, y) -> ret0, ret1, ret2 {
+                // iterate through the input_tables_len
+                let evals := mload(evals_ptr)
+                // We store a boolean flag in the first LSG byte of the evals ptr to determine if we need to load in a new table or reuse the previous table.
+                let new_table := and(evals, BYTE_FLAG_BITMASK)
+                evals := shr(8, evals)
+                let z := and(evals, PTR_BITMASK)
+                evals := shr(16, evals)
+                quotient_eval_numer := addmod(
+                    mulmod(quotient_eval_numer, y, R), 
+                    addmod(
+                        mload(0x20), 
+                        mulmod(
+                            mload(0x20), 
+                            sub(R, calldataload(z)), 
+                            R
+                        ),
+                        R
+                    ), 
+                    R
+                )
+                quotient_eval_numer := addmod(
+                    mulmod(quotient_eval_numer, y, R),
+                    mulmod(
+                        mload(0x00), 
+                        addmod(
+                            mulmod(calldataload(z), calldataload(z), R), 
+                            sub(R, calldataload(z)), 
+                            R
+                        ),
+                        R
+                    ), 
+                    R
+                )
+                // load in the lookup_table_lines from the evals_ptr
+                evals_ptr := add(evals_ptr, 0x20)
+                // Due to the fact that lookups can share the previous table, we can cache it for reuse.
+                let input_expression := mload(evals_ptr)
+                if new_table {
+                    evals_ptr, input_expression, table := lookup_expr_evals_packed(0xc0, evals_ptr, mload(evals_ptr), 0x0)
+                } 
+                // call the expression_evals function to evaluate the input_lines
+                let input
+                evals_ptr, input_expression, input := lookup_expr_evals_packed(0xc0, evals_ptr, input_expression, 0x0)
+                let p_input := and(shr(16, evals), PTR_BITMASK)
+                let p_table := and(shr(48, evals), PTR_BITMASK)
+                quotient_eval_numer := addmod(
+                    mulmod(quotient_eval_numer, y, R), 
+                    mulmod(
+                        addmod(
+                            1, 
+                            sub(R, addmod(mload(0x40), mload(0x0), R)),
+                            R
+                        ), 
+                        addmod(
+                            mulmod(
+                                calldataload(and(evals, PTR_BITMASK)), 
+                                mulmod(
+                                    addmod(calldataload(p_input), mload(0x80), R), 
+                                    addmod(calldataload(p_table), mload(0xa0), R), 
+                                    R
+                                ),
+                                R
+                            ), 
+                            sub(
+                                R, 
+                                mulmod(
+                                    calldataload(z), 
+                                    mulmod(addmod(input, mload(0x80), R), addmod(table, mload(0xa0), R), R), 
+                                    R
+                                )
+                            ),
+                            R
+                        ), 
+                        R
+                    ), 
+                    R
+                )
+                quotient_eval_numer := addmod(
+                    mulmod(quotient_eval_numer, y, R),
+                    mulmod(mload(0x20), addmod(calldataload(p_input), sub(R, calldataload(p_table)), R), R),
+                    R
+                )
+                quotient_eval_numer := addmod(
+                    mulmod(quotient_eval_numer, y, R),
+                    mulmod(
+                        addmod(
+                            1, 
+                            sub(R, addmod(mload(0x40), mload(0x0), R)), R), 
+                            mulmod(
+                                addmod(calldataload(p_input), sub(R, calldataload(p_table)), R),
+                                addmod(calldataload(p_input), sub(R, calldataload(and(shr(32, evals), PTR_BITMASK))), R),
+                                R
+                            ),
+                        R
+                    ),
                     R
                 )
                 ret0 := evals_ptr
@@ -1032,15 +1137,26 @@ contract Halo2VerifierReusable {
                     mstore(0x40, mload(add(theta_mptr, 0x1E0))) // l_blind
                     mstore(0x60, mload(theta_mptr)) // theta
                     mstore(0x80, mload(add(theta_mptr, 0x20))) // beta
-                    let evals_ptr, end_ptr := soa_layout_metadata({{ 
+                    let evals_ptr, meta_data := soa_layout_metadata({{ 
                         vk_const_offsets["lookup_computations_len_offset"]|hex()
                     }}, vk_mptr)
                     // lookup meta data contains 32 byte flags for indicating if we need to do a lookup table lines 
                     // expression evaluation or we can use the previous one cached in the table var. 
-                    if end_ptr {
+                    if meta_data {
                         let table
-                        for { } lt(evals_ptr, end_ptr) { } {
-                            evals_ptr, table, quotient_eval_numer := mv_lookup_evals(table, evals_ptr, quotient_eval_numer, y)
+                        let end_ptr := and(meta_data, PTR_BITMASK)
+                        let mv := and(shr(16, meta_data), BYTE_FLAG_BITMASK)
+                        switch mv
+                        case 0x0 {
+                            for { } lt(evals_ptr, end_ptr) { } {
+                                evals_ptr, table, quotient_eval_numer := mv_lookup_evals(table, evals_ptr, quotient_eval_numer, y)
+                            }
+                        } 
+                        case 0x1 {
+                            mstore(0xA0, mload(add(theta_mptr, 0x40))) // gamma
+                            for { } lt(evals_ptr, end_ptr) { } {
+                                evals_ptr, table, quotient_eval_numer := lookup_evals(table, evals_ptr, quotient_eval_numer, y)
+                            }
                         }
                     }
                 }

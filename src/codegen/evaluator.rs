@@ -507,7 +507,8 @@ pub struct InputsEncoded {
 }
 
 // Holds the encoded data stored in the VK artifact
-// needed to perform the lookup computations for one lookup table
+// needed to perform the lookup computations for one lookup table.
+// In the case where non mv-lookups are used the inputs.len() == 1
 #[derive(Clone, PartialEq, Eq)]
 pub struct LookupEncoded {
     pub(crate) evals: U256,
@@ -532,7 +533,7 @@ pub struct LookupEncoded {
 // sum of the lengths of the inputs.
 impl LookupEncoded {
     pub fn len(&self) -> usize {
-        let base_len = 1; // Add 2 if table_inputs is none
+        let base_len = 1;
         base_len
             + self
                 .inputs
@@ -570,7 +571,6 @@ impl LookupsDataEncoded {
         }
     }
 }
-
 #[derive(Debug)]
 pub(crate) struct EvaluatorDynamic<'a, F: PrimeField> {
     cs: &'a ConstraintSystem<F>,
@@ -696,22 +696,19 @@ where
 
     #[cfg(not(feature = "mv-lookup"))]
     pub fn quotient_eval_fsm_usage(&self) -> usize {
-        unimplemented!(
-            "quotient_eval_fsm_usage function is not implemented for the non mv-lookup version of the verifier"
-        );
-        // let gate_computation_fsm_usage = self.gate_computation_fsm_usage();
+        let gate_computation_fsm_usage = self.gate_computation_fsm_usage();
 
-        // let permutation_computation_fsm_usage = (self.data.permutation_z_evals.len() * 0x20) + 0x40;
+        // 0x40 offset b/c that is where the fsm pointer starts in the permutations computation code block
+        let permutation_computation_fsm_usage = (self.data.permutation_z_evals.len() * 0x20) + 0x40;
 
-        // // TODO implement the non mv lookup version of this calculation.
-        // let input_expressions_fsm_usage = 0;
+        let input_expressions_fsm_usage = 0xc0; // offset to store theta offset ptrs used in the non mv lookup computations.
 
-        // itertools::max([
-        //     gate_computation_fsm_usage,
-        //     permutation_computation_fsm_usage,
-        //     input_expressions_fsm_usage,
-        // ])
-        // .unwrap()
+        itertools::max([
+            gate_computation_fsm_usage,
+            permutation_computation_fsm_usage,
+            input_expressions_fsm_usage,
+        ])
+        .unwrap()
     }
 
     #[cfg(feature = "mv-lookup")]
@@ -758,6 +755,123 @@ where
             input_expressions_fsm_usage,
         ])
         .unwrap()
+    }
+
+    #[cfg(not(feature = "mv-lookup"))]
+    pub fn lookup_computations(&self, offset: usize) -> LookupsDataEncoded {
+        let input_tables = self
+            .cs
+            .lookups()
+            .iter()
+            .map(|lookup| {
+                let [packed_table_expr, packed_input_expr] =
+                    [lookup.table_expressions(), lookup.input_expressions()].map(|expressions| {
+                        let fsm = 0xc0; // offset to store theta offset ptrs used in the non mv lookup computations.
+                        self.set_static_mem_ptr(fsm);
+                        let (lines, inputs) = expressions
+                            .iter()
+                            .map(|expression| self.evaluate_encode(expression))
+                            .fold((Vec::new(), Vec::new()), |mut acc, result| {
+                                acc.0.extend(result.0);
+                                acc.1.push(result.1);
+                                acc
+                            });
+                        self.reset();
+                        self.encode_pack_expr_operations(lines, 8, Some(inputs))
+                    });
+                (packed_table_expr, packed_input_expr)
+            })
+            .collect_vec();
+
+        let is_contiguous = |positions: &[usize]| -> bool {
+            if positions.is_empty() {
+                return true;
+            }
+            for window in positions.windows(2) {
+                if window[1] != window[0] + 1 {
+                    return false;
+                }
+            }
+            true
+        };
+
+        let mut accumulator = 0;
+
+        let mut previous_table_lines: Option<Vec<Uint<256, 4>>> = None;
+        // Hshmap used to check for contigious table_expressions in the lookups
+        let mut table_expression_positions: HashMap<Vec<Uint<256, 4>>, Vec<usize>> = HashMap::new();
+
+        let lookups: Vec<LookupEncoded> = izip!(input_tables, &self.data.lookup_evals)
+            .enumerate()
+            .map(|(lookup_index, (input_table, evals))| {
+                let (table_lines, inputs) = input_table;
+                let evals = self.encode_quintuple_evaluation_word(evals, 8);
+                let mut inner_accumulator = 0;
+                let inputs: Vec<InputsEncoded> = inputs
+                    .iter()
+                    .map(|input_lines| {
+                        let res = InputsEncoded {
+                            expression: vec![input_lines.clone()],
+                            acc: inner_accumulator,
+                        };
+                        inner_accumulator += 1;
+                        res
+                    })
+                    .collect_vec();
+                table_expression_positions
+                    .entry(table_lines.clone())
+                    .or_default()
+                    .push(lookup_index);
+
+                let mut lookup_encoded = LookupEncoded {
+                    evals,
+                    table_lines: table_lines.clone(),
+                    inputs: inputs.clone(),
+                    acc: accumulator,
+                };
+                // The first byte in the eval word will store whether we use the previous table lines or not.
+                // If we use the previous table lines then the byte will be 0x0 otherwise it will be 0x1.
+                if let Some(prev_lines) = &previous_table_lines {
+                    if *prev_lines != table_lines {
+                        lookup_encoded.evals |= U256::from(0x1);
+                    } else {
+                        lookup_encoded.table_lines = Vec::new();
+                    }
+                } else {
+                    lookup_encoded.evals |= U256::from(0x1);
+                }
+                accumulator += lookup_encoded.len();
+
+                previous_table_lines = Some(table_lines);
+                lookup_encoded
+            })
+            .collect_vec();
+        // Check if any table_expressions (Vec<Expression<F>>) have non-contiguous positions
+        for (table_exprs, positions) in table_expression_positions.iter() {
+            if !is_contiguous(positions) {
+                eprintln!(
+                            "Warning: The table expressions `{:?}` are not contiguous across lookups. \
+                            Consider reordering your lookups so that all occurrences of this table expression \
+                            are adjacent to each other. This will result in more gas efficient verifications",
+                            table_exprs
+                        );
+            }
+        }
+
+        if lookups.is_empty() {
+            return LookupsDataEncoded::default();
+        }
+
+        let mut data = LookupsDataEncoded {
+            lookups,
+            meta_data: U256::from(0),
+        };
+        // Insert the num_words and end_ptr to the beginning of the meta data word.
+        let end_ptr = (data.len() * 32) + offset;
+        data.meta_data = U256::from(end_ptr);
+        // Encode 0x1 into the next byte to indicate that is non-mv-lookup data.
+        data.meta_data |= U256::from(0x1) << 16;
+        data
     }
 
     #[cfg(feature = "mv-lookup")]
@@ -911,15 +1025,6 @@ where
         data
     }
 
-    #[cfg(not(feature = "mv-lookup"))]
-    pub fn lookup_computations(&self, _offset: usize) -> LookupsDataEncoded {
-        unimplemented!(
-            "Lookup_computations function is not implemented for the non mv-lookup version of the verifier"
-        );
-        // // TODO implement non mv lookup version of this
-        // LookupsDataEncoded::default()
-    }
-
     fn eval_encoded(
         &self,
         column_type: impl Into<Any>,
@@ -971,9 +1076,23 @@ where
         bit_offset: usize,
     ) -> U256 {
         let (z_i, z_j, z_i_last) = value;
-        U256::from(z_i.ptr().value().as_usize() << bit_offset)
-            | U256::from(z_j.ptr().value().as_usize() << (bit_offset + 16))
-            | U256::from(z_i_last.ptr().value().as_usize() << (bit_offset + 32))
+        U256::from(z_i.ptr().value().as_usize()) << bit_offset
+            | U256::from(z_j.ptr().value().as_usize()) << (bit_offset + 16)
+            | U256::from(z_i_last.ptr().value().as_usize()) << (bit_offset + 32)
+    }
+
+    #[allow(dead_code)]
+    fn encode_quintuple_evaluation_word(
+        &self,
+        value: &(Word, Word, Word, Word, Word),
+        bit_offset: usize,
+    ) -> U256 {
+        let (z_i, z_j, z_k, z_l, z_m) = value;
+        U256::from(z_i.ptr().value().as_usize()) << bit_offset
+            | U256::from(z_j.ptr().value().as_usize()) << (bit_offset + 16)
+            | U256::from(z_k.ptr().value().as_usize()) << (bit_offset + 32)
+            | U256::from(z_l.ptr().value().as_usize()) << (bit_offset + 48)
+            | U256::from(z_m.ptr().value().as_usize()) << (bit_offset + 64)
     }
 
     fn encode_pack_expr_operations(

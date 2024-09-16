@@ -26,8 +26,10 @@ jobs:
       - name: Install solc
         run: (hash svm 2>/dev/null || cargo install svm-rs) && svm install 0.8.20 && svm use 0.8.20 && solc --version
 
-      - name: Run test
+      - name: Run test (mv lookups)
         run: cargo test --workspace --all-features --all-targets -- --nocapture
+      - name: Run test (non-mv lookups)
+        run: cargo test --workspace --all-targets -- --nocapture
       - name: Run separate example
         run: cargo run --package halo2_solidity_verifier --example separately --all-features -- --nocapture
 
