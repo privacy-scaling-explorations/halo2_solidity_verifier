@@ -17,6 +17,27 @@ let (verifier_solidity, vk_solidity) = generator.render_separately().unwrap();
 
 Check [`examples/separately.rs`](./examples/separately.rs) for more details.
 
+> [!NOTE]
+> Currently examples are broken due to a `cargo` update ([rust-lang/rust#123285](https://github.com/rust-lang/rust/issues/123285)), to run them override cargo version:
+>
+> - Install `1.77.0` version with `rustup`:
+>
+> ```bash
+> rustup install 1.77.0
+> ```
+>
+> - Override cargo version:
+>
+> ```bash
+> rustup override set 1.77.0
+> ```
+>
+> - Run examples:
+>
+> ```bash
+> cargo run --example separately --features=evm
+> ```
+
 ### Generate verifier and verifying key in a single solidity contract
 
 ```rust
@@ -31,6 +52,29 @@ let calldata = encode_calldata(vk_address, &proof, &instances);
 ```
 
 Note that function selector is already included.
+
+## Test
+
+> [!NOTE]
+> Currently tests are broken due to a `cargo` update ([rust-lang/rust#123285](https://github.com/rust-lang/rust/issues/123285)), to run them override cargo version:
+>
+> - Install `1.77.0` version with `rustup`:
+>
+> ```bash
+> rustup install 1.77.0
+> ```
+>
+> - Override cargo version:
+>
+> ```bash
+> rustup override set 1.77.0
+> ```
+>
+> - Run examples:
+>
+> ```bash
+> cargo test
+> ```
 
 ## Limitations & Caveats
 
