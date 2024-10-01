@@ -17,6 +17,17 @@ let (verifier_solidity, vk_solidity) = generator.render_separately().unwrap();
 
 Check [`examples/separately.rs`](./examples/separately.rs) for more details.
 
+> [!NOTE]
+> Currently example run only with rust `1.77.0` version due to a `cargo` update ([rust-lang/rust#123285](https://github.com/rust-lang/rust/issues/123285)).
+>
+> The `rust` toolchain version is specified in [rust-toolchain.toml](./rust-toolchain.toml) file.
+
+Run example with the following command:
+
+```bash
+cargo run --all-features --example separately
+```
+
 ### Generate verifier and verifying key in a single solidity contract
 
 ```rust
@@ -31,6 +42,20 @@ let calldata = encode_calldata(vk_address, &proof, &instances);
 ```
 
 Note that function selector is already included.
+
+## Test
+
+To run tests, use the following command:
+
+```bash
+cargo test --workspace --all-features --all-targets -- --nocapture
+```
+
+> [!NOTE]
+> Currently tests run only with rust `1.77.0` version due to a `cargo` update ([rust-lang/rust#123285](https://github.com/rust-lang/rust/issues/123285)).
+>
+> The `rust` toolchain version is specified in [rust-toolchain.toml](./rust-toolchain.toml) file.
+
 
 ## Limitations & Caveats
 
