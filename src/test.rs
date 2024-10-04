@@ -5,7 +5,9 @@ use crate::{
     FN_SIG_VERIFY_PROOF, FN_SIG_VERIFY_PROOF_WITH_VK_ADDRESS,
 };
 use halo2_proofs::halo2curves::bn256::{Bn256, Fr};
+use rand::Rng;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
+use revm::primitives::Address;
 use sha3::Digest;
 use std::{fs::File, io::Write};
 
@@ -53,7 +55,6 @@ fn run_render<C: halo2::TestCircuit<Fr>>() {
     let generator = SolidityGenerator::new(&params, &vk, Bdfg21, instances.len())
         .set_acc_encoding(acc_encoding);
     let verifier_solidity = generator.render().unwrap();
-    // println!("Verifier solidity conjoined: {verifier_solidity}");
     let verifier_creation_code = compile_solidity(verifier_solidity);
     let verifier_creation_code_size = verifier_creation_code.len();
 
@@ -68,6 +69,9 @@ fn run_render<C: halo2::TestCircuit<Fr>>() {
     let (gas_cost, output) = evm.call(verifier_address, encode_calldata(None, &proof, &instances));
     assert_eq!(output, [vec![0; 31], vec![1]].concat());
     println!("Gas cost conjoined: {gas_cost}");
+
+    // Fuzzing tests
+    bit_flip_fuzzing_test::<C>(verifier_address, proof, instances, &mut evm);
 }
 
 fn run_render_separately<C: halo2::TestCircuit<Fr>>() {
@@ -118,6 +122,28 @@ fn run_render_separately<C: halo2::TestCircuit<Fr>>() {
         );
         assert_eq!(output, [vec![0; 31], vec![1]].concat());
         println!("Gas cost separate: {gas_cost}");
+        bit_flip_fuzzing_test::<C>(verifier_address, proof, instances, &mut evm);
+    }
+}
+
+fn bit_flip_fuzzing_test<C: halo2::TestCircuit<Fr>>(
+    verifier_address: Address,
+    proof: Vec<u8>,
+    instances: Vec<Fr>,
+    evm: &mut Evm,
+) {
+    let mut rng = rand::thread_rng();
+    for i in 0..10 {
+        let mut modified_proof = proof.clone();
+        let random_byte = rng.gen_range(0..modified_proof.len());
+        let random_bit = rng.gen_range(0..8);
+        modified_proof[random_byte] ^= 1 << random_bit;
+
+        evm.call_fail(
+            verifier_address,
+            encode_calldata(None, &modified_proof, &instances),
+        );
+        println!("Modified proof {} failed verification as expected", i);
     }
 }
 

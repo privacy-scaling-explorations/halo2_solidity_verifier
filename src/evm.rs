@@ -51,7 +51,8 @@ pub(crate) mod test {
     pub use revm;
     use revm::{
         primitives::{
-            Address, CfgEnv, CfgEnvWithHandlerCfg, ExecutionResult, Output, TransactTo, TxEnv,
+            Address, Bytes, CfgEnv, CfgEnvWithHandlerCfg, ExecutionResult, HaltReason, Output,
+            TransactTo, TxEnv,
         },
         Evm as EVM, InMemoryDB,
     };
@@ -73,6 +74,8 @@ pub(crate) mod test {
             .stderr(Stdio::piped())
             .arg("--bin")
             .arg("--optimize")
+            .arg("--model-checker-targets")
+            .arg("underflow,overflow")
             .arg("-")
             .spawn()
         {
@@ -81,7 +84,7 @@ pub(crate) mod test {
                 panic!("Command 'solc' not found");
             }
             Err(err) => {
-                panic!("Failed to spwan process with command 'solc':\n{err}");
+                panic!("Failed to spawn process with command 'solc':\n{err}");
             }
         };
         process
@@ -189,6 +192,20 @@ pub(crate) mod test {
             }
         }
 
+        /// Apply call transaction to given `address` with `calldata` with the expectation of failure.
+        /// Returns `gas_used` and `return_data`.
+        ///
+        /// # Panics
+        /// Panics if execution succeeds.
+        pub fn call_fail(&mut self, address: Address, calldata: Vec<u8>) {
+            let (_, _) = self.transact_failure_or_panic(TxEnv {
+                gas_limit: u64::MAX,
+                transact_to: TransactTo::Call(address),
+                data: calldata.into(),
+                ..Default::default()
+            });
+        }
+
         fn transact_success_or_panic(&mut self, tx: TxEnv) -> (u64, Output) {
             self.evm.context.evm.env.tx = tx;
             let result = self.evm.transact_commit().unwrap();
@@ -218,6 +235,42 @@ pub(crate) mod test {
                 ExecutionResult::Halt { reason, gas_used } => panic!(
                     "Transaction halts unexpectedly with gas_used {gas_used} and reason {reason:?}"
                 ),
+            }
+        }
+
+        fn transact_failure_or_panic(&mut self, tx: TxEnv) -> (u64, Result<Bytes, HaltReason>) {
+            self.evm.context.evm.env.tx = tx;
+            let result = self.evm.transact_commit().unwrap();
+            self.evm.context.evm.env.tx = Default::default();
+            match result {
+                ExecutionResult::Success {
+                    gas_used,
+                    output,
+                    logs,
+                    ..
+                } => {
+                    if !logs.is_empty() {
+                        println!("--- logs from {} ---", logs[0].address);
+                        for (log_idx, log) in logs.iter().enumerate() {
+                            println!("log#{log_idx}");
+                            for (topic_idx, topic) in log.topics().iter().enumerate() {
+                                println!("  topic{topic_idx}: {topic:?}");
+                            }
+                        }
+                        println!("--- end ---");
+                    }
+                    panic!("Transaction succeeds unexpectedly with gas_used {gas_used} and output {output:?}")
+                }
+                ExecutionResult::Revert { gas_used, output } => {
+                    println!("Transaction reverts with gas_used {gas_used} and output {output:#x}");
+                    (gas_used, Ok(output))
+                }
+                ExecutionResult::Halt { reason, gas_used } => {
+                    println!(
+                        "Transaction halts unexpectedly with gas_used {gas_used} and reason {reason:?}"
+                    );
+                    (gas_used, Err(reason))
+                }
             }
         }
     }
