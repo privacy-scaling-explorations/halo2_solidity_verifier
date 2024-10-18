@@ -203,7 +203,7 @@ mod halo2 {
     pub fn create_testdata_bdfg21<C: TestCircuit<bn256::Fr>>(
         k: u32,
         acc_encoding: Option<AccumulatorEncoding>,
-        mut rng: impl RngCore + Clone + Sync + Send,
+        mut rng: impl RngCore + Clone + Send + Sync,
     ) -> (
         ParamsKZG<bn256::Bn256>,
         VerifyingKey<bn256::G1Affine>,
