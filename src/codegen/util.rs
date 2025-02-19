@@ -14,6 +14,7 @@ use std::{
     fmt::{self, Display, Formatter},
     ops::{Add, Sub},
 };
+use halo2_proofs::halo2curves::serde::Repr;
 
 #[derive(Debug)]
 pub(crate) struct ConstraintSystemMeta {
@@ -666,9 +667,9 @@ pub(crate) fn fr_to_u256(fe: impl Borrow<bn256::Fr>) -> U256 {
 
 pub(crate) fn fe_to_u256<F>(fe: impl Borrow<F>) -> U256
 where
-    F: PrimeField<Repr = [u8; 0x20]>,
+    F: PrimeField<Repr = Repr<32>>,
 {
-    U256::from_le_bytes(fe.borrow().to_repr())
+    U256::from_le_bytes(fe.borrow().to_repr().inner().clone())
 }
 
 pub(crate) fn to_u256_be_bytes<T>(value: T) -> [u8; 32]
