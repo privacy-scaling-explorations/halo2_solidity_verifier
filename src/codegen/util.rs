@@ -2,10 +2,10 @@ use crate::codegen::{
     template::Halo2VerifyingKey,
     BatchOpenScheme::{self, Bdfg21, Gwc19},
 };
-use halo2_proofs::{
-    halo2curves::{bn256, ff::PrimeField, CurveAffine},
-    plonk::{Any, Column, ConstraintSystem},
-};
+use halo2_backend::plonk::ConstraintSystemBack;
+use halo2_middleware::circuit::ColumnMid;
+use halo2_proofs::halo2curves::serde::Repr;
+use halo2_proofs::halo2curves::{bn256, ff::PrimeField, CurveAffine};
 use itertools::{chain, izip, Itertools};
 use ruint::{aliases::U256, UintTryFrom};
 use std::{
@@ -14,12 +14,11 @@ use std::{
     fmt::{self, Display, Formatter},
     ops::{Add, Sub},
 };
-use halo2_proofs::halo2curves::serde::Repr;
 
 #[derive(Debug)]
 pub(crate) struct ConstraintSystemMeta {
     pub(crate) num_fixeds: usize,
-    pub(crate) permutation_columns: Vec<Column<Any>>,
+    pub(crate) permutation_columns: Vec<ColumnMid>,
     pub(crate) permutation_chunk_len: usize,
     pub(crate) num_lookup_permuteds: usize,
     pub(crate) num_permutation_zs: usize,
@@ -37,38 +36,34 @@ pub(crate) struct ConstraintSystemMeta {
 }
 
 impl ConstraintSystemMeta {
-    pub(crate) fn new(cs: &ConstraintSystem<impl PrimeField>) -> Self {
+    pub(crate) fn new(cs: &ConstraintSystemBack<impl PrimeField>) -> Self {
         let num_fixeds = cs.num_fixed_columns();
-        let permutation_columns = cs.permutation().get_columns();
+        let permutation_columns = cs.permutation_columns().to_vec();
         let permutation_chunk_len = cs.degree() - 2;
         let num_lookup_permuteds = 2 * cs.lookups().len();
-        let num_permutation_zs = cs
-            .permutation()
-            .get_columns()
-            .chunks(cs.degree() - 2)
-            .count();
+        let num_permutation_zs = cs.permutation_columns().chunks(cs.degree() - 2).count();
         let num_lookup_zs = cs.lookups().len();
         let num_quotients = cs.degree() - 1;
         let advice_queries = cs
             .advice_queries()
             .iter()
-            .map(|(column, rotation)| (column.index(), rotation.0))
+            .map(|(column, rotation)| (column.index, rotation.0))
             .collect_vec();
         let fixed_queries = cs
             .fixed_queries()
             .iter()
-            .map(|(column, rotation)| (column.index(), rotation.0))
+            .map(|(column, rotation)| (column.index, rotation.0))
             .collect_vec();
         let num_evals = advice_queries.len()
             + fixed_queries.len()
             + 1
-            + cs.permutation().get_columns().len()
+            + cs.permutation_columns().len()
             + (3 * num_permutation_zs - 1)
             + 5 * cs.lookups().len();
         let num_phase = *cs.advice_column_phase().iter().max().unwrap_or(&0) as usize + 1;
         // Indices of advice and challenge are not same as their position in calldata/memory,
         // because we support multiple phases, we need to remap them and find their actual indices.
-        let remapping = |phase: Vec<u8>| {
+        let remapping = |phase: &[u8]| {
             let nums = phase.iter().fold(vec![0; num_phase], |mut nums, phase| {
                 nums[*phase as usize] += 1;
                 nums
@@ -193,7 +188,7 @@ pub(crate) struct Data {
     pub(crate) w_cptr: Ptr,
 
     pub(crate) fixed_comms: Vec<EcPoint>,
-    pub(crate) permutation_comms: HashMap<Column<Any>, EcPoint>,
+    pub(crate) permutation_comms: HashMap<ColumnMid, EcPoint>,
     pub(crate) advice_comms: Vec<EcPoint>,
     pub(crate) lookup_permuted_comms: Vec<(EcPoint, EcPoint)>,
     pub(crate) permutation_z_comms: Vec<EcPoint>,
@@ -206,7 +201,7 @@ pub(crate) struct Data {
     pub(crate) advice_evals: HashMap<(usize, i32), Word>,
     pub(crate) fixed_evals: HashMap<(usize, i32), Word>,
     pub(crate) random_eval: Word,
-    pub(crate) permutation_evals: HashMap<Column<Any>, Word>,
+    pub(crate) permutation_evals: HashMap<ColumnMid, Word>,
     pub(crate) permutation_z_evals: Vec<(Word, Word, Word)>,
     pub(crate) lookup_evals: Vec<(Word, Word, Word, Word, Word)>,
 
@@ -669,7 +664,7 @@ pub(crate) fn fe_to_u256<F>(fe: impl Borrow<F>) -> U256
 where
     F: PrimeField<Repr = Repr<32>>,
 {
-    U256::from_le_bytes(fe.borrow().to_repr().inner().clone())
+    U256::from_le_bytes(*fe.borrow().to_repr().inner())
 }
 
 pub(crate) fn to_u256_be_bytes<T>(value: T) -> [u8; 32]

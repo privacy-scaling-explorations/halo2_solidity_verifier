@@ -212,7 +212,7 @@ impl<'a> SolidityGenerator<'a> {
             .flat_map(g1_to_u256s)
             .tuples()
             .collect();
-        let permutation_comms = chain![self.vk.permutation().commitments()]
+        let permutation_comms = chain![self.vk.permutation_commitments()]
             .flat_map(g1_to_u256s)
             .tuples()
             .collect();
