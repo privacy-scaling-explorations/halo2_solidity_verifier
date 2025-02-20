@@ -1,12 +1,13 @@
 #![allow(clippy::useless_format)]
 
 use crate::codegen::util::{code_block, fe_to_u256, ConstraintSystemMeta, Data};
+use halo2_backend::plonk::{ConstraintSystemBack, QueryBack, VarBack};
+use halo2_middleware::circuit::{ChallengeMid, Gate};
+use halo2_middleware::expression::Expression;
+use halo2_proofs::halo2curves::serde::Repr;
 use halo2_proofs::{
     halo2curves::ff::PrimeField,
-    plonk::{
-        Advice, AdviceQuery, Any, Challenge, ConstraintSystem, Expression, Fixed, FixedQuery, Gate,
-        InstanceQuery,
-    },
+    plonk::{Advice, Any, Fixed},
 };
 use itertools::{chain, izip, Itertools};
 use ruint::aliases::U256;
@@ -14,7 +15,7 @@ use std::{cell::RefCell, cmp::Ordering, collections::HashMap, iter};
 
 #[derive(Debug)]
 pub(crate) struct Evaluator<'a, F: PrimeField> {
-    cs: &'a ConstraintSystem<F>,
+    cs: &'a ConstraintSystemBack<F>,
     meta: &'a ConstraintSystemMeta,
     data: &'a Data,
     var_counter: RefCell<usize>,
@@ -23,10 +24,10 @@ pub(crate) struct Evaluator<'a, F: PrimeField> {
 
 impl<'a, F> Evaluator<'a, F>
 where
-    F: PrimeField<Repr = [u8; 0x20]>,
+    F: PrimeField<Repr = Repr<32>> + Clone,
 {
     pub(crate) fn new(
-        cs: &'a ConstraintSystem<F>,
+        cs: &'a ConstraintSystemBack<F>,
         meta: &'a ConstraintSystemMeta,
         data: &'a Data,
     ) -> Self {
@@ -43,7 +44,7 @@ where
         self.cs
             .gates()
             .iter()
-            .flat_map(Gate::polynomials)
+            .map(Gate::polynomial)
             .map(|expression| self.evaluate_and_reset(expression))
             .collect()
     }
@@ -87,7 +88,7 @@ where
                     ],
                     columns.iter().flat_map(|column| {
                         let perm_eval = &data.permutation_evals[column];
-                        let eval = self.eval(*column.column_type(), column.index(), 0);
+                        let eval = self.eval(column.column_type, column.index, 0);
                         let item = format!("mulmod(beta, {perm_eval}, r)");
                         [format!(
                             "lhs := mulmod(lhs, addmod(addmod({eval}, {item}, r), gamma, r), r)"
@@ -96,7 +97,7 @@ where
                     (chunk_idx == 0)
                         .then(|| "mstore(0x00, mulmod(beta, mload(X_MPTR), r))".to_string()),
                     columns.iter().enumerate().flat_map(|(idx, column)| {
-                        let eval = self.eval(*column.column_type(), column.index(), 0);
+                        let eval = self.eval(column.column_type, column.index, 0);
                         let item = format!("addmod(addmod({eval}, mload(0x00), r), gamma, r)");
                         chain![
                             [format!("rhs := mulmod(rhs, {item}, r)")],
@@ -126,19 +127,22 @@ where
             .lookups()
             .iter()
             .map(|lookup| {
-                let [(input_lines, inputs), (table_lines, tables)] =
-                    [lookup.input_expressions(), lookup.table_expressions()].map(|expressions| {
-                        let (lines, inputs) = expressions
-                            .iter()
-                            .map(|expression| self.evaluate(expression))
-                            .fold((Vec::new(), Vec::new()), |mut acc, result| {
-                                acc.0.extend(result.0);
-                                acc.1.push(result.1);
-                                acc
-                            });
-                        self.reset();
-                        (lines, inputs)
-                    });
+                let [(input_lines, inputs), (table_lines, tables)] = [
+                    lookup.input_expressions.clone(),
+                    lookup.table_expressions.clone(),
+                ]
+                .map(|expressions| {
+                    let (lines, inputs) = expressions
+                        .iter()
+                        .map(|expression| self.evaluate(expression))
+                        .fold((Vec::new(), Vec::new()), |mut acc, result| {
+                            acc.0.extend(result.0);
+                            acc.1.push(result.1);
+                            acc
+                        });
+                    self.reset();
+                    (lines, inputs)
+                });
                 (input_lines, inputs, table_lines, tables)
             })
             .collect_vec();
@@ -221,7 +225,7 @@ where
 
     fn eval(&self, column_type: impl Into<Any>, column_index: usize, rotation: i32) -> String {
         match column_type.into() {
-            Any::Advice(_) => self.data.advice_evals[&(column_index, rotation)].to_string(),
+            Any::Advice => self.data.advice_evals[&(column_index, rotation)].to_string(),
             Any::Fixed => self.data.fixed_evals[&(column_index, rotation)].to_string(),
             Any::Instance => self.data.instance_eval.to_string(),
         }
@@ -232,13 +236,13 @@ where
         *self.var_cache.borrow_mut() = Default::default();
     }
 
-    fn evaluate_and_reset(&self, expression: &Expression<F>) -> (Vec<String>, String) {
+    fn evaluate_and_reset(&self, expression: &Expression<F, VarBack>) -> (Vec<String>, String) {
         let result = self.evaluate(expression);
         self.reset();
         result
     }
 
-    fn evaluate(&self, expression: &Expression<F>) -> (Vec<String>, String) {
+    fn evaluate(&self, expression: &Expression<F, VarBack>) -> (Vec<String>, String) {
         evaluate(
             expression,
             &|constant| {
@@ -253,7 +257,7 @@ where
             },
             &|query| {
                 self.init_var(
-                    self.eval(Advice::default(), query.column_index(), query.rotation().0),
+                    self.eval(Advice, query.column_index(), query.rotation().0),
                     Some(advice_eval_var(query)),
                 )
             },
@@ -280,12 +284,6 @@ where
                 lhs_acc.extend(rhs_acc);
                 lhs_acc.extend(lines);
                 (lhs_acc, var)
-            },
-            &|(mut acc, var), scalar| {
-                let scalar = u256_string(scalar);
-                let (lines, var) = self.init_var(format!("mulmod({var}, {scalar}, r)"), None);
-                acc.extend(lines);
-                (acc, var)
             },
         )
     }
@@ -318,11 +316,11 @@ fn u256_string(value: U256) -> String {
     }
 }
 
-fn fixed_eval_var(fixed_query: FixedQuery) -> String {
+fn fixed_eval_var(fixed_query: QueryBack) -> String {
     column_eval_var("f", fixed_query.column_index(), fixed_query.rotation().0)
 }
 
-fn advice_eval_var(advice_query: AdviceQuery) -> String {
+fn advice_eval_var(advice_query: QueryBack) -> String {
     column_eval_var("a", advice_query.column_index(), advice_query.rotation().0)
 }
 
@@ -336,35 +334,34 @@ fn column_eval_var(prefix: &'static str, column_index: usize, rotation: i32) -> 
 
 #[allow(clippy::too_many_arguments)]
 fn evaluate<F, T>(
-    expression: &Expression<F>,
+    expression: &Expression<F, VarBack>,
     constant: &impl Fn(U256) -> T,
-    fixed: &impl Fn(FixedQuery) -> T,
-    advice: &impl Fn(AdviceQuery) -> T,
-    instance: &impl Fn(InstanceQuery) -> T,
-    challenge: &impl Fn(Challenge) -> T,
+    fixed: &impl Fn(QueryBack) -> T,
+    advice: &impl Fn(QueryBack) -> T,
+    instance: &impl Fn(QueryBack) -> T,
+    challenge: &impl Fn(ChallengeMid) -> T,
     negated: &impl Fn(T) -> T,
     sum: &impl Fn(T, T) -> T,
     product: &impl Fn(T, T) -> T,
-    scaled: &impl Fn(T, U256) -> T,
 ) -> T
 where
-    F: PrimeField<Repr = [u8; 0x20]>,
+    F: PrimeField<Repr = Repr<32>>,
 {
     let evaluate = |expr| {
         evaluate(
-            expr, constant, fixed, advice, instance, challenge, negated, sum, product, scaled,
+            expr, constant, fixed, advice, instance, challenge, negated, sum, product,
         )
     };
     match expression {
         Expression::Constant(scalar) => constant(fe_to_u256(*scalar)),
-        Expression::Selector(_) => unreachable!(),
-        Expression::Fixed(query) => fixed(*query),
-        Expression::Advice(query) => advice(*query),
-        Expression::Instance(query) => instance(*query),
-        Expression::Challenge(value) => challenge(*value),
         Expression::Negated(value) => negated(evaluate(value)),
         Expression::Sum(lhs, rhs) => sum(evaluate(lhs), evaluate(rhs)),
         Expression::Product(lhs, rhs) => product(evaluate(lhs), evaluate(rhs)),
-        Expression::Scaled(value, scalar) => scaled(evaluate(value), fe_to_u256(*scalar)),
+        Expression::Var(VarBack::Query(query)) => match query.column_type() {
+            Any::Advice => advice(*query),
+            Any::Fixed => fixed(*query),
+            Any::Instance => instance(*query),
+        },
+        Expression::Var(VarBack::Challenge(ch)) => challenge(*ch),
     }
 }
