@@ -4,12 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-#halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2", tag = "v0.4.0" }
-#halo2_frontend = { git = "https://github.com/privacy-scaling-explorations/halo2", tag = "v0.4.0" }
-halo2_proofs = { path = "../halo2/halo2_proofs" }
-halo2_backend = { path = "../halo2/halo2_backend" }
-halo2_frontend = { path = "../halo2/halo2_frontend" }
-halo2_middleware = { path = "../halo2/halo2_middleware" }
+halo2_proofs = { git = "https://github.com/pmikolajczyk41/halo2", branch = "expose-back" }
+halo2_backend = { git = "https://github.com/pmikolajczyk41/halo2", branch = "expose-back" }
+halo2_frontend = { git = "https://github.com/pmikolajczyk41/halo2", branch = "expose-back" }
+halo2_middleware = { git = "https://github.com/pmikolajczyk41/halo2", branch = "expose-back" }
 askama = { version = "0.12.0", features = ["config"], default-features = false }
 hex = "0.4.3"
 ruint = "1"
